@@ -46,3 +46,6 @@ tests/*.out
 tests/*.php
 tests/*.sh
 tests/*.mem
+
+# PECL package tarballs
+*.tgz

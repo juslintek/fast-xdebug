@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<package packagerversion="1.10.18" version="2.0"
+         xmlns="http://pear.php.net/dtd/package-2.0"
+         xmlns:tasks="http://pear.php.net/dtd/tasks-1.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pear.php.net/dtd/tasks-1.0
+             http://pear.php.net/dtd/tasks-1.0.xsd
+             http://pear.php.net/dtd/package-2.0
+             http://pear.php.net/dtd/package-2.0.xsd">
+ <name>fast_xdebug</name>
+ <channel>pecl.php.net</channel>
+ <summary>Fast, Xdebug-API-compatible code coverage (line, branch, path) for PHP.</summary>
+ <description>
+fast-xdebug is a PHP Zend extension that provides code coverage (line, branch
+and path) through the Xdebug coverage API, so PHPUnit / php-code-coverage /
+Cobertura tooling consume it unchanged. It analyses each op_array into basic
+blocks once and records one byte per executed block at runtime, reconstructing
+lines/branches/paths at collection time. Branch and path coverage therefore
+cost about the same at runtime as line coverage -- roughly an order of
+magnitude faster than Xdebug for path coverage. Coverage only (no debugger,
+profiler or tracer).
+ </description>
+ <lead>
+  <name>Linas Jusys</name>
+  <user>juslintek</user>
+  <email>jusys.linas@gmail.com</email>
+  <active>yes</active>
+ </lead>
+ <date>2026-09-10</date>
+ <version>
+  <release>0.1.0</release>
+  <api>0.1.0</api>
+ </version>
+ <stability>
+  <release>alpha</release>
+  <api>alpha</api>
+ </stability>
+ <license uri="https://opensource.org/licenses/BSD-2-Clause">BSD-2-Clause</license>
+ <notes>
+Initial alpha release: Xdebug-API-compatible line, branch and path code
+coverage with a block-based backend. Builds on PHP 8.2-8.5 (NTS and ZTS).
+ </notes>
+ <contents>
+  <dir name="/">
+   <file role="src" name="config.m4"/>
+   <file role="src" name="config.w32"/>
+   <file role="src" name="fast_xdebug.c"/>
+   <file role="src" name="php_fast_xdebug.h"/>
+   <dir name="src">
+    <file role="src" name="analysis.c"/>
+    <file role="src" name="coverage.c"/>
+    <file role="src" name="coverage.h"/>
+   </dir>
+   <dir name="tests">
+    <file role="test" name="001-identity.phpt"/>
+    <file role="test" name="010-line-coverage.phpt"/>
+    <file role="test" name="011-line-coverage-main.phpt"/>
+    <file role="test" name="020-branch-shape.phpt"/>
+    <file role="test" name="030-frameless-internal-call.phpt"/>
+    <file role="test" name="031-frameless-in-function.phpt"/>
+    <file role="test" name="040-filter.phpt"/>
+    <file role="test" name="041-started.phpt"/>
+   </dir>
+   <file role="doc" name="README.md"/>
+   <file role="doc" name="LICENSE"/>
+  </dir>
+ </contents>
+ <dependencies>
+  <required>
+   <php>
+    <min>8.2.0</min>
+    <max>8.5.99</max>
+   </php>
+   <pearinstaller>
+    <min>1.4.0</min>
+   </pearinstaller>
+  </required>
+ </dependencies>
+ <providesextension>fast_xdebug</providesextension>
+ <extsrcrelease>
+  <configureoption name="enable-fast-xdebug"
+                   prompt="Enable the fast-xdebug coverage engine"
+                   default="yes"/>
+ </extsrcrelease>
+</package>
