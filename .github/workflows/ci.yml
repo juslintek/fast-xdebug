@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: PHP ${{ matrix.php }} (${{ matrix.ts }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.2', '8.3', '8.4', '8.5']
+        ts: ['nts']
+        include:
+          - php: '8.4'
+            ts: 'zts'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PHP (with dev headers)
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          # request the ZTS build when matrix.ts == zts
+          # (setup-php exposes this via the `phpts` input on 2.x)
+        env:
+          phpts: ${{ matrix.ts }}
+
+      - name: Install build + validation tooling
+        run: sudo apt-get update && sudo apt-get install -y valgrind gdb build-essential autoconf
+
+      - name: phpize / configure / make
+        run: |
+          phpize
+          ./configure --enable-fast-xdebug --with-php-config="$(command -v php-config)"
+          make -j"$(nproc)"
+
+      - name: Load smoke test (registers as xdebug)
+        run: |
+          php -n -d extension="$PWD/modules/fast_xdebug.so" -r '
+            assert(extension_loaded("xdebug"));
+            assert(version_compare(phpversion("xdebug"), "3.1", ">="));
+            assert(in_array("coverage", xdebug_info("mode"), true));
+            echo fast_xdebug_engine(), " OK\n";
+          '
+
+      - name: .phpt test suite
+        run: |
+          php -n run-tests.php -q -p "$(command -v php)" \
+            -d extension="$PWD/modules/fast_xdebug.so" tests/*.phpt
+
+      - name: Valgrind — frameless internal-call regression
+        run: |
+          cat > /tmp/frameless.php <<'PHP'
+          <?php
+          $needle = 'x';
+          $haystack = ['a', 'b'];
+          xdebug_start_code_coverage(XDEBUG_CC_BRANCH_CHECK);
+          in_array($needle, $haystack);
+          $d = xdebug_get_code_coverage();
+          echo "survived\n";
+          PHP
+          USE_ZEND_ALLOC=0 valgrind --error-exitcode=99 -q \
+            php -n -d extension="$PWD/modules/fast_xdebug.so" /tmp/frameless.php
+
+  integration:
+    name: php-code-coverage / PHPUnit integration (PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.2', '8.3', '8.4']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          tools: composer
+      - run: sudo apt-get update && sudo apt-get install -y build-essential autoconf
+      - name: Build extension
+        run: |
+          phpize && ./configure --enable-fast-xdebug --with-php-config="$(command -v php-config)" && make -j"$(nproc)"
+      - name: Run the integration harness (PHPUnit --path-coverage -> Cobertura)
+        run: |
+          cd tests/integration
+          composer install --no-interaction
+          php -n -d extension="$GITHUB_WORKSPACE/modules/fast_xdebug.so" -d memory_limit=512M \
+            ./vendor/bin/phpunit --path-coverage --coverage-cobertura=cobertura.xml
+          # assert the report is well-formed and carries branch data
+          php -r '$x=simplexml_load_file("cobertura.xml"); if(!$x||!isset($x["branches-valid"])){fwrite(STDERR,"bad cobertura\n");exit(1);} echo "cobertura OK: branches-valid=",$x["branches-valid"],"\n";'

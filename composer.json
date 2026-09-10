@@ -1,0 +1,23 @@
+{
+    "name": "juslintek/fast-xdebug",
+    "description": "Xdebug-API-compatible PHP code coverage (line, branch, path) with a fast block-based backend. Makes branch/path coverage nearly as cheap as line coverage.",
+    "type": "php-ext",
+    "license": "BSD-2-Clause",
+    "keywords": ["code-coverage", "xdebug", "pcov", "branch-coverage", "path-coverage", "phpunit", "extension"],
+    "require": {
+        "php": ">=8.2,<8.6"
+    },
+    "php-ext": {
+        "extension-name": "fast_xdebug",
+        "priority": 90,
+        "support-zts": true,
+        "support-nts": true,
+        "configure-options": [
+            {
+                "name": "enable-fast-xdebug",
+                "description": "whether to enable the fast-xdebug coverage engine",
+                "needs-value": false
+            }
+        ]
+    }
+}
