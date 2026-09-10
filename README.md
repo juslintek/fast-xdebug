@@ -6,10 +6,14 @@ the ~20× gap that makes `phpunit --path-coverage` painful today — while still
 being accepted, unchanged, by PHPUnit / `php-code-coverage` / GitLab / Cobertura
 tooling.
 
-> Status: working proof of concept. Coverage only (no debugger/profiler/tracer).
-> Line coverage is byte-identical to pcov and Xdebug. Branch/path output is in
-> Xdebug's exact shape; see [Accuracy](#accuracy) for where it matches and where
-> it deliberately differs.
+> Status: working proof of concept.
+> **Coverage** (line/branch/path) and **profiling** (Cachegrind) are implemented
+> and measured faster than Xdebug. **Step debugging (DBGp) is not implemented** —
+> it is specified in [`docs/debugger-spec.md`](docs/debugger-spec.md) and
+> deliberately left as a documented no-op rather than a half-working session that
+> would hang an IDE (see [Step debugging](#step-debugging)).
+> Line coverage is byte-identical to pcov and Xdebug; branch/path output is in
+> Xdebug's exact shape (see [Accuracy](#accuracy)).
 
 ## Measured numbers first
 
@@ -123,6 +127,48 @@ Supported API surface: `xdebug_start_code_coverage`, `xdebug_stop_code_coverage`
 `xdebug_info`, plus the `XDEBUG_CC_*` / `XDEBUG_FILTER_*` / `XDEBUG_PATH_*`
 constants. A sentinel `fast_xdebug_engine()` lets you confirm which engine is
 loaded.
+
+## Profiling
+
+fast-xdebug ships a Cachegrind profiler on the same "cheap hook" thesis: it uses
+one `zend_observer` enter/exit per **call** (not per opcode), builds a call tree
+with self/inclusive time and memory, and writes a Cachegrind file that
+KCachegrind, qcachegrind, PhpStorm and Blackfire's importer read.
+
+```sh
+# auto-start (writes cachegrind.out.<pid> to xdebug.output_dir)
+php -d extension=fast_xdebug.so -d xdebug.mode=profile -d xdebug.output_dir=/tmp app.php
+
+# or drive it from userland (Xdebug-compatible API)
+xdebug_start_trace('/tmp/profile.out');
+run_the_code();
+xdebug_stop_trace();
+echo xdebug_get_profiler_filename();
+```
+
+Measured on a call-dense workload (`fib(20)` ×200), best of 3:
+
+| | Time | Overhead |
+|---|---|---|
+| no profiler | 0.092 s | 1.0× |
+| **fast-xdebug** | 1.28 s | 13.9× |
+| **Xdebug** | 6.25 s | 67.8× |
+
+→ **~4.9× faster than Xdebug's profiler**, and the gap widens on realistic
+(less call-dense) workloads because the per-call observer cost is fixed.
+
+## Step debugging
+
+**Not implemented in this release.** Step debugging speaks the DBGp protocol to
+an IDE, and a partial implementation is worse than none: an IDE that negotiates a
+session and then hits an unimplemented command hangs. With `xdebug.mode=debug`
+the extension emits a diagnostic and does nothing else, rather than opening a
+half-working DBGp session. The full plan — DBGp socket server, `zend_observer`
+statement callbacks, breakpoints, stack/context/eval — is written up in
+[`docs/debugger-spec.md`](docs/debugger-spec.md). This is also the point where
+the "register as `xdebug`" compatibility posture (see below) is most in tension:
+faithfully passing an IDE's Xdebug-specific expectations is a much higher bar than
+answering `php-code-coverage`'s probes.
 
 ## Compatibility
 

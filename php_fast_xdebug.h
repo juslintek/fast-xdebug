@@ -12,7 +12,7 @@
 extern zend_module_entry fast_xdebug_module_entry;
 #define phpext_fast_xdebug_ptr &fast_xdebug_module_entry
 
-#define PHP_FAST_XDEBUG_VERSION "0.1.0"
+#define PHP_FAST_XDEBUG_VERSION "0.2.0"
 
 /*
  * Reported Xdebug-compatible version. sebastian/environment and

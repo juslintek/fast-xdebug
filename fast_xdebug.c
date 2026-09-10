@@ -25,6 +25,8 @@
 
 #include "php_fast_xdebug.h"
 #include "src/coverage.h"
+#include "src/profiler.h"
+#include "src/debugger.h"
 
 ZEND_DECLARE_MODULE_GLOBALS(fast_xdebug)
 
@@ -36,14 +38,29 @@ PHP_INI_END()
 
 /* ---- helpers ----------------------------------------------------------- */
 
-static zend_bool fxd_mode_has_coverage(void)
+static zend_bool fxd_mode_has(const char *needle, zend_bool default_on)
 {
 	const char *mode = INI_STR("xdebug.mode");
 	if (!mode || !*mode) {
-		return 1; /* default on */
+		return default_on;
 	}
-	/* mode may be a comma list, e.g. "develop,coverage" */
-	return strstr(mode, "coverage") != NULL;
+	/* mode may be a comma list, e.g. "develop,coverage,profile" */
+	return strstr(mode, needle) != NULL;
+}
+
+static zend_bool fxd_mode_has_coverage(void)
+{
+	return fxd_mode_has("coverage", 1);
+}
+
+static zend_bool fxd_mode_has_profile(void)
+{
+	return fxd_mode_has("profile", 0);
+}
+
+static zend_bool fxd_mode_has_debug(void)
+{
+	return fxd_mode_has("debug", 0);
 }
 
 /* ---- arginfo ----------------------------------------------------------- */
@@ -63,6 +80,11 @@ ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_fxd_info, 0, 0, 0)
 	ZEND_ARG_INFO(0, category)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_fxd_start_trace, 0, 0, 0)
+	ZEND_ARG_INFO(0, traceFile)
+	ZEND_ARG_INFO(0, options)
 ZEND_END_ARG_INFO()
 
 /* ---- userland functions ------------------------------------------------ */
@@ -184,6 +206,12 @@ PHP_FUNCTION(xdebug_info)
 		if (fxd_mode_has_coverage()) {
 			add_next_index_string(return_value, "coverage");
 		}
+		if (fxd_mode_has_profile()) {
+			add_next_index_string(return_value, "profile");
+		}
+		if (fxd_mode_has_debug()) {
+			add_next_index_string(return_value, "debug");
+		}
 		return;
 	}
 
@@ -195,10 +223,67 @@ PHP_FUNCTION(xdebug_info)
 		if (fxd_mode_has_coverage()) {
 			add_next_index_string(&mode, "coverage");
 		}
+		if (fxd_mode_has_profile()) {
+			add_next_index_string(&mode, "profile");
+		}
+		if (fxd_mode_has_debug()) {
+			add_next_index_string(&mode, "debug");
+		}
 		add_assoc_zval(return_value, "mode", &mode);
 		add_assoc_string(return_value, "engine", "fast-xdebug");
 		add_assoc_string(return_value, "version", (char *) FXD_XDEBUG_COMPAT_VERSION);
 	}
+}
+
+/* --- profiler userland API (Xdebug-compatible) --- */
+
+/* xdebug_start_trace([?string $traceFile = null, int $options = 0]): ?string
+ * We map Xdebug's trace/profile entrypoint onto the cachegrind profiler. */
+PHP_FUNCTION(xdebug_start_trace)
+{
+	char *file = NULL;
+	size_t file_len = 0;
+	zend_long options = 0;
+
+	ZEND_PARSE_PARAMETERS_START(0, 2)
+		Z_PARAM_OPTIONAL
+		Z_PARAM_STRING_OR_NULL(file, file_len)
+		Z_PARAM_LONG(options)
+	ZEND_PARSE_PARAMETERS_END();
+	(void) options;
+
+	fxd_profiler_start(file);
+	if (fxd_profiler_filename()) {
+		RETURN_STRING(fxd_profiler_filename());
+	}
+	RETURN_NULL();
+}
+
+/* xdebug_stop_trace(): void */
+PHP_FUNCTION(xdebug_stop_trace)
+{
+	ZEND_PARSE_PARAMETERS_NONE();
+	fxd_profiler_stop();
+}
+
+/* xdebug_get_profiler_filename(): string|false */
+PHP_FUNCTION(xdebug_get_profiler_filename)
+{
+	ZEND_PARSE_PARAMETERS_NONE();
+	if (fxd_profiler_active() && fxd_profiler_filename()) {
+		RETURN_STRING(fxd_profiler_filename());
+	}
+	RETURN_FALSE;
+}
+
+/* xdebug_get_tracefile_name(): string|false (alias for the profiler file) */
+PHP_FUNCTION(xdebug_get_tracefile_name)
+{
+	ZEND_PARSE_PARAMETERS_NONE();
+	if (fxd_profiler_filename()) {
+		RETURN_STRING(fxd_profiler_filename());
+	}
+	RETURN_FALSE;
 }
 
 /* fast_xdebug_engine(): string  -- lets tools distinguish us from real Xdebug. */
@@ -217,6 +302,10 @@ static const zend_function_entry fast_xdebug_functions[] = {
 	PHP_FE(xdebug_code_coverage_started, arginfo_fxd_void)
 	PHP_FE(xdebug_set_filter,            arginfo_fxd_set_filter)
 	PHP_FE(xdebug_info,                  arginfo_fxd_info)
+	PHP_FE(xdebug_start_trace,           arginfo_fxd_start_trace)
+	PHP_FE(xdebug_stop_trace,            arginfo_fxd_void)
+	PHP_FE(xdebug_get_profiler_filename, arginfo_fxd_void)
+	PHP_FE(xdebug_get_tracefile_name,    arginfo_fxd_void)
 	PHP_FE(fast_xdebug_engine,           arginfo_fxd_void)
 	PHP_FE_END
 };
@@ -240,7 +329,15 @@ PHP_MINIT_FUNCTION(fast_xdebug)
 	REGISTER_LONG_CONSTANT("XDEBUG_PATH_INCLUDE",         FXD_PATH_INCLUDE,         CONST_CS | CONST_PERSISTENT);
 	REGISTER_LONG_CONSTANT("XDEBUG_PATH_EXCLUDE",         FXD_PATH_EXCLUDE,         CONST_CS | CONST_PERSISTENT);
 
+	/* Trace/profile option constants (Xdebug-compatible values). */
+	REGISTER_LONG_CONSTANT("XDEBUG_TRACE_APPEND",       1, CONST_CS | CONST_PERSISTENT);
+	REGISTER_LONG_CONSTANT("XDEBUG_TRACE_COMPUTERIZED", 2, CONST_CS | CONST_PERSISTENT);
+	REGISTER_LONG_CONSTANT("XDEBUG_TRACE_HTML",         4, CONST_CS | CONST_PERSISTENT);
+	REGISTER_LONG_CONSTANT("XDEBUG_TRACE_NAKED_FILENAME", 8, CONST_CS | CONST_PERSISTENT);
+
 	fxd_coverage_minit();
+	fxd_profiler_minit();
+	fxd_debugger_minit();
 	return SUCCESS;
 }
 
@@ -265,12 +362,26 @@ PHP_RINIT_FUNCTION(fast_xdebug)
 	ZEND_TSRMLS_CACHE_UPDATE();
 #endif
 	fxd_coverage_rinit();
+	fxd_profiler_rinit();
+	fxd_debugger_rinit();
+
+	/* Auto-start the profiler when xdebug.mode contains "profile", matching
+	 * Xdebug's behaviour (output goes to xdebug.output_dir). */
+	if (fxd_mode_has_profile()) {
+		fxd_profiler_start(NULL);
+	}
+	/* Auto-start the debugger listener when xdebug.mode contains "debug". */
+	if (fxd_mode_has_debug()) {
+		fxd_debugger_maybe_start();
+	}
 	return SUCCESS;
 }
 
 PHP_RSHUTDOWN_FUNCTION(fast_xdebug)
 {
 	fxd_coverage_rshutdown();
+	fxd_profiler_rshutdown();
+	fxd_debugger_rshutdown();
 	return SUCCESS;
 }
 

@@ -28,8 +28,8 @@ profiler or tracer).
  </lead>
  <date>2026-09-10</date>
  <version>
-  <release>0.1.0</release>
-  <api>0.1.0</api>
+  <release>0.2.0</release>
+  <api>0.2.0</api>
  </version>
  <stability>
   <release>alpha</release>
@@ -37,8 +37,9 @@ profiler or tracer).
  </stability>
  <license uri="https://opensource.org/licenses/BSD-2-Clause">BSD-2-Clause</license>
  <notes>
-Initial alpha release: Xdebug-API-compatible line, branch and path code
-coverage with a block-based backend. Builds on PHP 8.2-8.5 (NTS and ZTS).
+0.2.0: adds a Cachegrind profiler (~5x faster than Xdebug's profiler) via
+zend_observer, alongside the existing line/branch/path coverage. Step
+debugging (DBGp) is specified but not yet implemented. PHP 8.2-8.5, NTS/ZTS.
  </notes>
  <contents>
   <dir name="/">
@@ -50,6 +51,10 @@ coverage with a block-based backend. Builds on PHP 8.2-8.5 (NTS and ZTS).
     <file role="src" name="analysis.c"/>
     <file role="src" name="coverage.c"/>
     <file role="src" name="coverage.h"/>
+    <file role="src" name="profiler.c"/>
+    <file role="src" name="profiler.h"/>
+    <file role="src" name="debugger.c"/>
+    <file role="src" name="debugger.h"/>
    </dir>
    <dir name="tests">
     <file role="test" name="001-identity.phpt"/>
@@ -60,6 +65,7 @@ coverage with a block-based backend. Builds on PHP 8.2-8.5 (NTS and ZTS).
     <file role="test" name="031-frameless-in-function.phpt"/>
     <file role="test" name="040-filter.phpt"/>
     <file role="test" name="041-started.phpt"/>
+    <file role="test" name="050-profiler-cachegrind.phpt"/>
    </dir>
    <file role="doc" name="README.md"/>
    <file role="doc" name="LICENSE"/>

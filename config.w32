@@ -6,5 +6,5 @@ ARG_ENABLE("fast-xdebug", "Enable fast-xdebug coverage engine", "no");
 if (PHP_FAST_XDEBUG != "no") {
 	AC_DEFINE("HAVE_FAST_XDEBUG", 1, "Have fast-xdebug support");
 	EXTENSION("fast_xdebug", "fast_xdebug.c", null, "/Dfast_xdebug_EXPORTS");
-	ADD_SOURCES(configure_module_dirname + "/src", "analysis.c coverage.c", "fast_xdebug");
+	ADD_SOURCES(configure_module_dirname + "/src", "analysis.c coverage.c profiler.c debugger.c", "fast_xdebug");
 }

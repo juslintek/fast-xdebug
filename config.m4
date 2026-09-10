@@ -16,7 +16,7 @@ if test "$PHP_FAST_XDEBUG" != "no"; then
   CFLAGS="$CFLAGS -fno-strict-aliasing"
 
   PHP_NEW_EXTENSION(fast_xdebug,
-    [fast_xdebug.c src/analysis.c src/coverage.c],
+    [fast_xdebug.c src/analysis.c src/coverage.c src/profiler.c src/debugger.c],
     $ext_shared,, [-fno-strict-aliasing])
   PHP_ADD_BUILD_DIR([$ext_builddir/src], 1)
 fi
