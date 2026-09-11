@@ -23,6 +23,13 @@
 #include "Zend/zend_extensions.h"
 #include "Zend/zend_smart_str.h"
 
+#ifdef HAVE_UNISTD_H
+#include <unistd.h>
+#endif
+#ifndef PHP_WIN32
+#include <unistd.h>
+#endif
+
 #include "php_fast_xdebug.h"
 #include "src/coverage.h"
 #include "src/profiler.h"
@@ -34,13 +41,123 @@ ZEND_DECLARE_MODULE_GLOBALS(fast_xdebug)
  * Registered as a plain (non-global-bound) entry; read via INI_STR at runtime. */
 PHP_INI_BEGIN()
 	PHP_INI_ENTRY("xdebug.mode", "coverage", PHP_INI_SYSTEM, NULL)
+	/* Memory-pressure adaptation: when 1 (default), path enumeration is capped
+	 * by memory_limit and skipped under live pressure so huge suites never OOM.
+	 * Set to 0 to always enumerate (Xdebug-parity fidelity). */
+	PHP_INI_ENTRY("fast_xdebug.memory_guard", "1", PHP_INI_ALL, NULL)
 PHP_INI_END()
 
 /* ---- helpers ----------------------------------------------------------- */
 
+/*
+ * Heuristic mode auto-detection.
+ *
+ * When xdebug.mode is "auto" (or unset), fast-xdebug cannot *know* your intent
+ * -- no extension can. Instead it resolves to a concrete mode set from
+ * environment signals, once per request, and caches the result. Precedence:
+ *
+ *   1. XDEBUG_MODE env var, if set  -> used verbatim (Xdebug's own convention).
+ *   2. XDEBUG_TRIGGER / XDEBUG_PROFILE env set  -> "profile".
+ *   3. XDEBUG_SESSION / XDEBUG_SESSION_START set -> would be "debug" (step
+ *      debugging is not implemented, so we note it and fall through).
+ *   4. Running under a test runner (argv/SERVER contains phpunit/paratest, or
+ *      PHPUNIT_* env)  -> "coverage".
+ *   5. Fallback -> "coverage" (the safe, useful default).
+ *
+ * This is documented as a heuristic. An explicit non-auto xdebug.mode always
+ * wins and is never second-guessed.
+ */
+static const char *fxd_getenv(const char *name)
+{
+	char *v = getenv(name);
+	if (v && *v) {
+		return v;
+	}
+	return NULL;
+}
+
+static zend_bool fxd_running_under_test_runner(void)
+{
+	/* env hints first (cheap, SAPI-independent) */
+	if (fxd_getenv("PHPUNIT_COMPOSER_INSTALL") || fxd_getenv("PARATEST")) {
+		return 1;
+	}
+	/* scan argv for a phpunit/paratest entrypoint */
+	{
+		zval *argv, *entry;
+		zend_string *argv_key = zend_string_init("argv", sizeof("argv") - 1, 0);
+		zval *server = NULL;
+
+		if (Z_TYPE(PG(http_globals)[TRACK_VARS_SERVER]) == IS_ARRAY) {
+			server = &PG(http_globals)[TRACK_VARS_SERVER];
+		}
+		if (server) {
+			argv = zend_hash_find(Z_ARRVAL_P(server), argv_key);
+			if (argv && Z_TYPE_P(argv) == IS_ARRAY) {
+				ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(argv), entry) {
+					if (Z_TYPE_P(entry) == IS_STRING) {
+						const char *s = Z_STRVAL_P(entry);
+						if (strstr(s, "phpunit") || strstr(s, "paratest") ||
+						    strstr(s, "codecept")) {
+							zend_string_release(argv_key);
+							return 1;
+						}
+					}
+				} ZEND_HASH_FOREACH_END();
+			}
+		}
+		zend_string_release(argv_key);
+	}
+	return 0;
+}
+
+/* Resolve the effective mode string for this request, caching in a static so
+ * the detection runs at most once. Returns a stable comma-separated string. */
+static const char *fxd_resolve_mode(void)
+{
+	static char resolved[64];
+	static zend_bool done = 0;
+	const char *mode;
+
+	if (done) {
+		return resolved;
+	}
+
+	mode = INI_STR("xdebug.mode");
+
+	if (mode && *mode && strcmp(mode, "auto") != 0) {
+		/* explicit mode: honour verbatim */
+		strncpy(resolved, mode, sizeof(resolved) - 1);
+		resolved[sizeof(resolved) - 1] = '\0';
+		done = 1;
+		return resolved;
+	}
+
+	/* mode == "auto" (or unset): detect from environment */
+	{
+		const char *env_mode = fxd_getenv("XDEBUG_MODE");
+		if (env_mode) {
+			strncpy(resolved, env_mode, sizeof(resolved) - 1);
+		} else if (fxd_getenv("XDEBUG_TRIGGER") || fxd_getenv("XDEBUG_PROFILE")) {
+			strcpy(resolved, "profile");
+		} else if (fxd_getenv("XDEBUG_SESSION") || fxd_getenv("XDEBUG_SESSION_START")) {
+			/* Debug requested, but step debugging is unimplemented; fall back to
+			 * coverage so the extension is still useful and no IDE hangs. */
+			strcpy(resolved, "coverage");
+		} else if (fxd_running_under_test_runner()) {
+			strcpy(resolved, "coverage");
+		} else {
+			strcpy(resolved, "coverage");
+		}
+		resolved[sizeof(resolved) - 1] = '\0';
+	}
+	done = 1;
+	return resolved;
+}
+
 static zend_bool fxd_mode_has(const char *needle, zend_bool default_on)
 {
-	const char *mode = INI_STR("xdebug.mode");
+	const char *mode = fxd_resolve_mode();
 	if (!mode || !*mode) {
 		return default_on;
 	}
@@ -287,10 +404,128 @@ PHP_FUNCTION(xdebug_get_tracefile_name)
 }
 
 /* fast_xdebug_engine(): string  -- lets tools distinguish us from real Xdebug. */
+/* Parse a PHP shorthand byte value ("512M", "1G", "-1") to bytes.
+ * Returns -1 for unlimited. */
+static zend_long fxd_parse_bytes(const char *v)
+{
+	zend_long n;
+	char last;
+	size_t len;
+	if (!v || !*v) {
+		return -1;
+	}
+	n = ZEND_STRTOL(v, NULL, 10);
+	len = strlen(v);
+	last = v[len - 1];
+	switch (last) {
+		case 'g': case 'G': n *= 1024; /* fallthrough */
+		case 'm': case 'M': n *= 1024; /* fallthrough */
+		case 'k': case 'K': n *= 1024; break;
+		default: break;
+	}
+	return n;
+}
+
+static long fxd_cpu_count(void)
+{
+#if defined(_SC_NPROCESSORS_ONLN)
+	long n = sysconf(_SC_NPROCESSORS_ONLN);
+	return n > 0 ? n : 1;
+#else
+	return 1;
+#endif
+}
+
+/*
+ * fast_xdebug_recommended_settings(): array
+ *
+ * Advisory only -- inspects the environment (memory_limit, CPU count, opcache,
+ * the requested mode) and returns recommended settings plus the reasoning, so a
+ * user or a bootstrap script can apply them. It does NOT change anything by
+ * itself. Everything here is a heuristic and labelled as such.
+ */
+PHP_FUNCTION(fast_xdebug_recommended_settings)
+{
+	zend_long mem_bytes;
+	long cpus;
+	zend_bool opcache_on;
+	zval recs, notes;
+
+	ZEND_PARSE_PARAMETERS_NONE();
+
+	mem_bytes = fxd_parse_bytes(INI_STR("memory_limit"));
+	cpus = fxd_cpu_count();
+	opcache_on = zend_hash_str_find(&module_registry, "zend opcache",
+	                                sizeof("zend opcache") - 1) != NULL;
+
+	array_init(return_value);
+	array_init(&recs);
+	array_init(&notes);
+
+	/* Path enumeration cap: branch/path coverage can explode on large files.
+	 * Scale the cap with available memory so small-memory environments stay
+	 * safe while big ones keep full fidelity. */
+	{
+		zend_long cap;
+		if (mem_bytes < 0) {
+			cap = 4096;            /* unlimited memory: full Xdebug-parity cap */
+			add_next_index_string(&notes,
+				"memory_limit is unlimited; using the full path cap (4096)");
+		} else if (mem_bytes <= (128 * 1024 * 1024)) {
+			cap = 256;
+			add_next_index_string(&notes,
+				"low memory_limit (<=128M): reduced path cap to 256 to avoid OOM");
+		} else if (mem_bytes <= (512 * 1024 * 1024)) {
+			cap = 1024;
+			add_next_index_string(&notes,
+				"moderate memory_limit (<=512M): path cap 1024");
+		} else {
+			cap = 4096;
+			add_next_index_string(&notes, "ample memory: full path cap (4096)");
+		}
+		add_assoc_long(&recs, "fast_xdebug.max_paths", cap);
+	}
+
+	/* Coverage filtering: strongly recommended for large codebases to avoid
+	 * analysing vendor code you don't measure. */
+	add_assoc_string(&recs, "coverage_filter",
+		"use xdebug_set_filter(XDEBUG_FILTER_CODE_COVERAGE, XDEBUG_PATH_INCLUDE, [src_dir]) "
+		"to skip vendor/framework code");
+
+	/* Memory adaptation is on by default; report it. */
+	add_assoc_bool(&recs, "fast_xdebug.memory_guard", 1);
+	add_next_index_string(&notes,
+		"memory_guard adapts path enumeration under pressure automatically");
+
+	/* opcache advice. */
+	if (!opcache_on) {
+		add_next_index_string(&notes,
+			"OPcache not detected; enabling opcache.enable_cli speeds up repeated runs");
+	} else {
+		add_next_index_string(&notes, "OPcache detected: good");
+	}
+
+	add_assoc_long(return_value, "memory_limit_bytes", mem_bytes);
+	add_assoc_long(return_value, "cpu_count", cpus);
+	add_assoc_bool(return_value, "opcache", opcache_on);
+	add_assoc_string(return_value, "resolved_mode", (char *) fxd_resolve_mode());
+	add_assoc_zval(return_value, "recommended", &recs);
+	add_assoc_zval(return_value, "notes", &notes);
+}
+
 PHP_FUNCTION(fast_xdebug_engine)
 {
 	ZEND_PARSE_PARAMETERS_NONE();
 	RETURN_STRING("fast-xdebug " PHP_FAST_XDEBUG_VERSION);
+}
+
+/* fast_xdebug_resolved_mode(): string
+ * Shows the effective mode after auto-detection, so users can see what
+ * xdebug.mode=auto resolved to (e.g. "coverage"). */
+PHP_FUNCTION(fast_xdebug_resolved_mode)
+{
+	ZEND_PARSE_PARAMETERS_NONE();
+	RETURN_STRING((char *) fxd_resolve_mode());
 }
 
 /* ---- function table ---------------------------------------------------- */
@@ -307,6 +542,8 @@ static const zend_function_entry fast_xdebug_functions[] = {
 	PHP_FE(xdebug_get_profiler_filename, arginfo_fxd_void)
 	PHP_FE(xdebug_get_tracefile_name,    arginfo_fxd_void)
 	PHP_FE(fast_xdebug_engine,           arginfo_fxd_void)
+	PHP_FE(fast_xdebug_resolved_mode,    arginfo_fxd_void)
+	PHP_FE(fast_xdebug_recommended_settings, arginfo_fxd_void)
 	PHP_FE_END
 };
 
@@ -315,6 +552,10 @@ static const zend_function_entry fast_xdebug_functions[] = {
 static void php_fast_xdebug_globals_ctor(zend_fast_xdebug_globals *g)
 {
 	memset(g, 0, sizeof(*g));
+	/* Safe defaults before any coverage session configures them. */
+	g->effective_max_paths = FXD_MAX_PATHS;
+	g->memory_limit_bytes = -1;
+	g->memory_guard = 1;
 }
 
 PHP_MINIT_FUNCTION(fast_xdebug)

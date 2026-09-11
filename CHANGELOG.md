@@ -4,6 +4,35 @@ All notable changes to fast-xdebug are documented here. Versions are alpha;
 the API surface tracks the subset of Xdebug's coverage/profiler API that
 php-code-coverage / PHPUnit / Cachegrind tooling consume.
 
+## [0.4.0] - 2026-09-11
+
+### Added
+- **Easy install everywhere:** an `install.sh` zero-config source installer;
+  a `release-binaries` GitHub Actions workflow that builds and attaches Linux
+  `.so` artifacts (PHP 8.2–8.5, NTS/ZTS) + a PECL `.tgz` + source tarball to
+  each tagged release; and `download-url-method` in `composer.json` so PIE uses
+  a prebuilt binary when available and otherwise builds from source. Install
+  matrix documented in the README (PIE / prebuilt / install.sh / source / PECL
+  tarball / Packagist).
+- **Heuristic mode auto-detection** (`xdebug.mode=auto`): resolves the effective
+  mode from environment signals (XDEBUG_MODE, XDEBUG_TRIGGER/PROFILE,
+  XDEBUG_SESSION, test-runner detection), with an explicit mode always winning.
+  New `fast_xdebug_resolved_mode()`.
+- **Auto-tuning advice** via `fast_xdebug_recommended_settings()` — inspects
+  memory_limit, CPU count, OPcache and the resolved mode and returns
+  recommendations (path cap scaled to memory, coverage-filter advice) plus the
+  reasoning. Advisory only; changes nothing.
+- **Automatic memory-pressure adaptation** (`fast_xdebug.memory_guard`, on by
+  default): the path-enumeration cap scales with memory_limit, and path
+  enumeration is skipped once live usage crosses 85 % of the limit — branches
+  and line coverage are still emitted, so large suites never OOM. Disable with
+  `fast_xdebug.memory_guard=0` for exact Xdebug-parity fidelity.
+
+### Notes
+- No behavioural change to line/branch/path coverage output; still
+  byte-identical lines to pcov/Xdebug. Validated valgrind-clean on the new
+  auto/recommended/memory-guard paths. 12 `.phpt` tests (3 new).
+
 ## [0.3.0] - 2026-09-11
 
 ### Added

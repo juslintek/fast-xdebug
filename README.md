@@ -169,22 +169,50 @@ about vectorizing the tiny scalar store, which SIMD cannot help.
 
 ## Install
 
-### With PIE (recommended)
+Pick whichever row fits you — they all end with an extension that registers as
+`xdebug` and is picked up automatically by PHPUnit / php-code-coverage.
+
+| Method | Needs a compiler? | Command |
+|---|---|---|
+| **PIE** (recommended) | builds from source, or grabs a prebuilt binary if available | `pie install juslintek/fast-xdebug` |
+| **Prebuilt binary** | no | download the `.so` for your PHP from [Releases](https://github.com/juslintek/fast-xdebug/releases), drop it in your `extension_dir` |
+| **`install.sh`** (source, zero-config) | yes | `./install.sh --enable-ini` |
+| **From source** (manual) | yes | `phpize && ./configure --enable-fast-xdebug && make && make install` |
+| **PECL package** (tarball) | yes | `pecl install fast_xdebug-<version>.tgz` (from a Release asset) |
+| **Composer** (Packagist, once submitted) | via PIE | `composer require juslintek/fast-xdebug` |
+
+### PIE (recommended)
 
 ```sh
-# from a checkout of this repo
 pie install juslintek/fast-xdebug
 ```
 
-The `composer.json` declares `"type": "php-ext"` with a `php-ext` block so PIE
-can build and enable it. PIE builds C extensions from source against your PHP.
+`composer.json` declares `"type": "php-ext"` with a `php-ext` block, and
+`download-url-method: ["pre-packaged-binary", "composer-default"]` — so PIE uses
+a **prebuilt release binary** when one matches your PHP, and otherwise builds
+from source. PECL is deprecated in favour of PIE.
 
-> PECL is deprecated in favour of PIE. If you want to try a **pre-release**
-> build, install from a git checkout (below); PIE's support for VCS/`dev-<branch>`
-> constraints on `php-ext` packages is evolving — check `pie install --help` for
-> your PIE version before relying on it.
+### Prebuilt binary (no compiler)
 
-### From source
+Each tagged release attaches Linux `.so` files named
+`fast_xdebug-<version>-php<X.Y>-<nts|zts>-linux-x86_64-api<N>.so` plus a
+`.sha256`. Match your PHP (`php -i | grep 'PHP Extension'` gives the API number),
+verify the checksum, copy it into your `extension_dir`
+(`php-config --extension-dir`) as `fast_xdebug.so`, and add the ini line below.
+
+### `install.sh` (source, zero-config)
+
+The easiest source install — it finds `php-config`/`phpize`, builds, installs to
+the right `extension_dir`, and can wire up php.ini for you:
+
+```sh
+./install.sh --enable-ini        # build, install, and add the extension= line
+./install.sh                     # build + install; print the ini line to add
+PHP_CONFIG=/path/php-config ./install.sh   # target a specific PHP
+./install.sh --native            # -O3 -march=native (self-hosted builds only)
+```
+
+### From source (manual)
 
 Requires PHP 8.2–8.5 dev headers (`phpize`, `php-config`) and a C toolchain.
 
@@ -192,14 +220,15 @@ Requires PHP 8.2–8.5 dev headers (`phpize`, `php-config`) and a C toolchain.
 phpize
 ./configure --enable-fast-xdebug --with-php-config="$(command -v php-config)"
 make -j"$(nproc)"
+sudo make install
 ```
 
-For a build you run on the same machine you compile on (e.g. a self-hosted CI
-runner), add `--enable-fast-xdebug-native` to tune for the host CPU
-(`-O3 -march=native`). **Do not** use it for a binary you distribute — it will
-only run on CPUs matching the build host. The default build is portable.
+`--enable-fast-xdebug-native` tunes for the build host CPU (`-O3 -march=native`);
+**don't** use it for a distributed binary — the default build is portable.
 
-Then load it as a **normal module** (not a Zend extension):
+### Enable it
+
+Load it as a **normal module** (not a Zend extension):
 
 ```ini
 ; php.ini
@@ -207,8 +236,15 @@ extension=fast_xdebug.so
 ```
 
 It registers under the name `xdebug` (see [Compatibility](#compatibility)), so
-PHPUnit will pick it up as the coverage driver automatically. Nothing else to
-configure; `xdebug.mode` defaults to `coverage`.
+PHPUnit picks it up as the coverage driver automatically. `xdebug.mode` defaults
+to `coverage`; set `xdebug.mode=auto` for [heuristic detection](#auto-configuration).
+
+> **Packagist / `composer require`:** the repository is Composer-valid and tagged;
+> once it is submitted to packagist.org (a one-time login-and-paste by the owner)
+> `composer require juslintek/fast-xdebug` works and auto-updates from tags.
+> **pecl.php.net central** (`pecl install fast_xdebug`) is intentionally *not*
+> pursued: the extension registers as `xdebug`, which the PECL review process
+> would (correctly) reject. Use PIE or the prebuilt binaries instead.
 
 ## Usage
 
@@ -233,9 +269,81 @@ xdebug_stop_code_coverage();
 
 Supported API surface: `xdebug_start_code_coverage`, `xdebug_stop_code_coverage`,
 `xdebug_get_code_coverage`, `xdebug_code_coverage_started`, `xdebug_set_filter`,
-`xdebug_info`, plus the `XDEBUG_CC_*` / `XDEBUG_FILTER_*` / `XDEBUG_PATH_*`
-constants. A sentinel `fast_xdebug_engine()` lets you confirm which engine is
-loaded.
+`xdebug_info`, `xdebug_start_trace`, `xdebug_stop_trace`,
+`xdebug_get_profiler_filename`, plus the `XDEBUG_CC_*` / `XDEBUG_FILTER_*` /
+`XDEBUG_PATH_*` constants. fast-xdebug-specific helpers:
+`fast_xdebug_engine()` (identify the engine), `fast_xdebug_resolved_mode()`
+(what `auto` chose), `fast_xdebug_recommended_settings()` (auto-tuning advice).
+
+## Auto-configuration
+
+fast-xdebug can adapt to its environment so you configure less. **All of this is
+heuristic and documented as such — an extension cannot truly know your intent,
+so nothing here overrides an explicit setting.**
+
+### Mode auto-detection (`xdebug.mode=auto`)
+
+With `xdebug.mode=auto`, the effective mode is resolved once per request from
+environment signals, in this order:
+
+1. `XDEBUG_MODE` env var, if set → used verbatim (Xdebug's own convention).
+2. `XDEBUG_TRIGGER` / `XDEBUG_PROFILE` set → `profile`.
+3. `XDEBUG_SESSION` / `XDEBUG_SESSION_START` set → would be `debug`; since step
+   debugging isn't implemented, falls back to `coverage` (never hangs an IDE).
+4. Running under a test runner (argv/env mentions phpunit/paratest/codeception)
+   → `coverage`.
+5. Fallback → `coverage`.
+
+An explicit `xdebug.mode` (anything other than `auto`) always wins.
+`fast_xdebug_resolved_mode()` shows what `auto` resolved to.
+
+### Recommended settings
+
+`fast_xdebug_recommended_settings()` inspects `memory_limit`, CPU count, OPcache
+and the resolved mode, and returns advisory recommendations (it changes
+nothing):
+
+```php
+print_r(fast_xdebug_recommended_settings());
+// [ memory_limit_bytes, cpu_count, opcache, resolved_mode,
+//   recommended => [ 'fast_xdebug.max_paths' => 1024, 'coverage_filter' => …,
+//                    'fast_xdebug.memory_guard' => 1 ],
+//   notes => [ … human-readable reasoning … ] ]
+```
+
+The suggested `max_paths` scales with `memory_limit` (≤128M → 256, ≤512M → 1024,
+larger/unlimited → 4096) so small-memory environments stay safe.
+
+## Memory management
+
+The extension is **valgrind-clean (no leaks)** — see [Development](#development).
+On top of that, an automatic **memory guard** keeps large suites from running
+out of memory:
+
+- At `xdebug_start_code_coverage()`, the path-enumeration cap is derived from
+  `memory_limit` (the biggest memory sink in branch/path coverage is path
+  enumeration, which can produce thousands of paths for a generated file).
+- During collection, if live usage crosses **85 % of `memory_limit`**, path
+  enumeration for the remaining functions is **skipped** — **branches and line
+  coverage are still emitted in full**, so you keep the important data and only
+  lose the optional path list, instead of an OOM fatal.
+
+It is on by default and costs one `zend_memory_usage()` read per function at
+collection time (nothing on the hot per-opcode path). Disable it with
+`fast_xdebug.memory_guard=0` for exact Xdebug-parity fidelity regardless of
+memory.
+
+## Tool integration
+
+| Tool | Works? | How |
+|---|---|---|
+| **PHPUnit** (line/branch/path coverage) | ✅ | auto-detected as the Xdebug driver; run `--coverage-*` / `--path-coverage` as usual |
+| **php-code-coverage** (Clover, Cobertura, HTML, Crap4J) | ✅ | same driver path; Cobertura carries branch data |
+| **GitLab / GitHub coverage** | ✅ | consumes the Cobertura/Clover output unchanged |
+| **Paratest / Codeception** | ✅ | detected by `xdebug.mode=auto`; uses the coverage path |
+| **KCachegrind / qcachegrind** | ✅ | open the `cachegrind.out.*` the profiler writes |
+| **PhpStorm / VS Code — profiling** | ✅ | import the Cachegrind snapshot |
+| **PhpStorm / VS Code — step debugging** | ❌ | not implemented (see [Step debugging](#step-debugging)); with `xdebug.mode=debug` it prints a notice rather than half-opening a DBGp session |
 
 ## Profiling
 

@@ -49,3 +49,7 @@ tests/*.mem
 
 # PECL package tarballs
 *.tgz
+
+# phpize backup + phpunit cache
+config.h.in~
+*.result.cache

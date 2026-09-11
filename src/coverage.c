@@ -35,6 +35,24 @@
 static HashTable fxd_analysis_cache;
 static zend_bool fxd_analysis_cache_inited = 0;
 
+/* Returns 1 when the process is close enough to memory_limit that we should
+ * stop spending memory on path enumeration. Cheap: one zend_memory_usage()
+ * read compared against a precomputed 85%-of-limit threshold. Always 0 when
+ * memory_guard is off or memory_limit is unlimited. */
+static zend_always_inline zend_bool fxd_under_memory_pressure(void)
+{
+	if (!FXD_G(memory_guard) || FXD_G(memory_limit_bytes) < 0) {
+		return 0;
+	}
+	{
+		size_t used = zend_memory_usage(0);
+		/* threshold = 85% of the limit */
+		zend_long threshold = FXD_G(memory_limit_bytes) -
+		                      (FXD_G(memory_limit_bytes) / 100 * 15);
+		return (zend_long) used >= threshold;
+	}
+}
+
 /* Saved previous user opcode handlers, so we chain rather than clobber. */
 static user_opcode_handler_t fxd_prev_handler[256];
 
@@ -448,6 +466,30 @@ void fxd_coverage_start(zend_long flags)
 	/* Invalidate all prior saturation decisions: a new session (possibly with
 	 * different flags, e.g. branch vs line) must re-record from scratch. */
 	FXD_G(sat_generation)++;
+
+	/* Memory-pressure adaptation: derive the per-session path cap from
+	 * memory_limit so low-memory environments stay safe, and record the limit
+	 * so fxd_under_memory_pressure() can check live usage during collection.
+	 * memory_guard is on by default; disable with fast_xdebug.memory_guard=0.
+	 *
+	 * NOTE: use PG(memory_limit), which PHP has already parsed to BYTES.
+	 * zend_ini_long("memory_limit") returns the unscaled number (e.g. 512 for
+	 * "512M"), which would make the pressure check fire immediately. */
+	{
+		zend_long lim = PG(memory_limit);
+		FXD_G(memory_limit_bytes) = lim; /* bytes; < 0 means unlimited */
+		FXD_G(memory_guard) = zend_ini_long("fast_xdebug.memory_guard",
+		                                    sizeof("fast_xdebug.memory_guard") - 1, 0) ? 1 : 0;
+		if (lim < 0) {
+			FXD_G(effective_max_paths) = FXD_MAX_PATHS;
+		} else if (lim <= (128 * 1024 * 1024)) {
+			FXD_G(effective_max_paths) = 256;
+		} else if (lim <= (512 * 1024 * 1024)) {
+			FXD_G(effective_max_paths) = 1024;
+		} else {
+			FXD_G(effective_max_paths) = FXD_MAX_PATHS;
+		}
+	}
 	/* Record where each active frame is now; keep the *minimum* per analysis so
 	 * lines at or after the start opline in the open block are reportable. */
 	fxd_snapshot_oplines(FXD_G(start_floors), 0);
@@ -554,7 +596,7 @@ static void fxd_find_paths(fxd_analysis *a, fxd_runtime *rt, uint32_t block_id,
 	uint32_t i;
 	zend_bool found = 0;
 
-	if (*paths_count >= FXD_MAX_PATHS) {
+	if (*paths_count >= FXD_G(effective_max_paths)) {
 		return;
 	}
 	if (depth >= a->num_blocks + 1) {
@@ -683,8 +725,12 @@ static void fxd_build_function(fxd_runtime *rt, zval *func_out)
 		add_index_zval(&branches, blk->start_op, &branch);
 	}
 
-	/* Paths */
-	{
+	/* Paths. Path enumeration is the one part of coverage that can blow up in
+	 * memory (thousands of paths per generated file). Under memory pressure we
+	 * skip it for this function -- branches (the cheaper, bounded data) are
+	 * still emitted, so line/branch coverage stay intact and only the optional
+	 * path list is degraded. This keeps a huge suite from OOMing. */
+	if (!fxd_under_memory_pressure()) {
 		uint32_t *stack = ecalloc(a->num_blocks + 2, sizeof(uint32_t));
 		uint32_t *outidx = ecalloc(a->num_blocks + 2, sizeof(uint32_t));
 		uint32_t paths_count = 0;

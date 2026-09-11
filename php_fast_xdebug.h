@@ -12,7 +12,7 @@
 extern zend_module_entry fast_xdebug_module_entry;
 #define phpext_fast_xdebug_ptr &fast_xdebug_module_entry
 
-#define PHP_FAST_XDEBUG_VERSION "0.3.0"
+#define PHP_FAST_XDEBUG_VERSION "0.4.0"
 
 /*
  * Reported Xdebug-compatible version. sebastian/environment and
@@ -77,6 +77,12 @@ ZEND_BEGIN_MODULE_GLOBALS(fast_xdebug)
 	 * saturated in the current session, so a hot loop short-circuits the whole
 	 * handler on a pointer compare -- before any hash lookup. */
 	void      *sat_last_opcodes;
+	/* Memory-pressure adaptation. effective_max_paths is derived from
+	 * memory_limit at coverage start; under live pressure, path enumeration is
+	 * capped harder or skipped so a huge suite never OOMs. */
+	zend_long  memory_limit_bytes;   /* -1 = unlimited */
+	uint32_t   effective_max_paths;  /* per-session cap, <= FXD_MAX_PATHS */
+	zend_bool  memory_guard;         /* whether adaptation is enabled */
 ZEND_END_MODULE_GLOBALS(fast_xdebug)
 
 ZEND_EXTERN_MODULE_GLOBALS(fast_xdebug)
