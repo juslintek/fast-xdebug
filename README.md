@@ -17,31 +17,49 @@ tooling.
 
 ## Measured numbers first
 
-Representative CPU-bound workload (`bench/workload.php`: memoised recursion,
-branch ladders, `in_array`/loop bodies, 4000 iterations). PHP 8.4.24 NTS,
-x86_64, gcc 11.5, best of 5, coverage timed around the workload only.
-Reproduce with `bench/` + the `.so`s you build.
+Environment: **PHP 8.4.24 NTS, x86_64, gcc 11.5.0, `-O2` (no `-march`)**. Best of
+5 runs; timing wraps only the workload (start→stop), not process startup.
+Reproduce with the `bench/` scripts and the `.so`s you build.
+
+### Coverage — `bench/workload.php`
+
+Memoised recursion, `if/elseif` ladders, `in_array`/loop bodies, 4000 iterations.
 
 | Engine | Line coverage | Branch + path coverage |
 |---|---|---|
-| no coverage | 0.0135 s (1.0×) | — |
-| **pcov** | 0.0665 s (4.9×) | ❌ not supported¹ |
-| **Xdebug** | 0.2528 s (18.7×) | 1.5541 s (**115×**) |
-| **fast-xdebug** | **0.1001 s (7.4×)** | **0.1013 s (7.5×)** |
+| no coverage | 0.0075 s (1.0×) | — |
+| **pcov** | 0.0497 s (6.6×) | ❌ not supported¹ |
+| **Xdebug 3.6** | 0.1473 s (19.6×) | 0.8945 s (**119×**) |
+| **fast-xdebug** | **0.0566 s (7.5×)** | **0.0606 s (8.1×)** |
 
-- fast-xdebug line coverage is **2.5× faster than Xdebug**, ~1.5× the cost of pcov.
-- fast-xdebug branch+path coverage is **15× faster than Xdebug**, and costs
-  essentially the same as its own line coverage.
+- Line coverage: **~2.6× faster than Xdebug**, ~1.14× the cost of pcov.
+- Branch + path: **~14.8× faster than Xdebug**, and — the key result — it costs
+  essentially the **same as fast-xdebug's own line coverage** (0.061 s vs
+  0.057 s), because path enumeration happens once at collection time, not per
+  opcode. Xdebug pays ~6× more for branch than line coverage; fast-xdebug pays ~1×.
+
+### Profiling — `fib(20) ×200` (call-dense)
+
+| Engine | Time | Overhead |
+|---|---|---|
+| no profiler | 0.0526 s | 1.0× |
+| **fast-xdebug** | 0.8926 s | 17.0× |
+| **Xdebug 3.6** | 4.1801 s | 79.5× |
+
+→ **~4.7× faster than Xdebug's profiler.** This workload is deliberately
+pathological (almost pure function calls); on realistic code with more work
+between calls the ratio improves further, because the profiler's cost is a fixed
+per-call amount and everything else runs at native speed.
 
 ¹ pcov is line-only by design. Under `phpunit --path-coverage`,
 `SebastianBergmann\CodeCoverage\Driver\Selector` throws
 `NoCodeCoverageDriverWithPathCoverageSupportAvailableException` unless the driver
 is Xdebug. **That is the gap fast-xdebug fills.**
 
-> The original brief targeted a large private suite (loyalty-hub, 741 tests) that
-> is not present in this environment, so the numbers above use a self-contained
-> workload. The *ratios* are the transferable result and match the brief's
-> qualitative expectations (Xdebug branch coverage ≈ 20× pcov line coverage).
+> These are self-contained microbenchmarks (the original brief's private
+> 741-test suite is not available here). Absolute numbers are workload- and
+> machine-specific and will drift run to run; the **ratios** are the
+> transferable result.
 
 ## Why it is faster
 
@@ -62,6 +80,76 @@ fast-xdebug:
 
 Full rationale, C4 diagrams, and the measured baseline are in
 [`docs/design.md`](docs/design.md) and [`docs/decisions/`](docs/decisions).
+
+## Is this SIMD? Would SIMD help? What would help more?
+
+**No — fast-xdebug uses no SIMD.** It is plain scalar C compiled at `-O2` with
+`-fno-strict-aliasing` and **no `-march`**, so it targets baseline x86-64 (only
+SSE2, no auto-vectorization to AVX). The speedup over Xdebug is **algorithmic,
+not instruction-level**: fewer operations per executed opcode (one byte store vs
+a hash probe / filter-slot read / per-line set insert), and moving branch/path
+work from runtime to collection time.
+
+**Would SIMD help? Almost certainly not, and here's the honest reasoning.** The
+hot path is:
+
+```c
+block_id = analysis->op_to_block[cur_op];   // one indexed load
+runtime->block_hit[block_id] = 1;           // one byte store
+```
+
+That is a **pointer-chasing, control-flow-bound, one-element-at-a-time** workload
+driven by the PHP VM calling our handler once per opcode. SIMD accelerates
+*data-parallel* work — the same operation over contiguous arrays. Here there is
+no vector to operate on: each opcode independently touches one scalar at a
+data-dependent index. The cost is dominated by the **indirect call from the VM
+into the handler and the branch-mispredict/cache behaviour around it**, none of
+which vector instructions address. Vectorizing a single-byte store would be
+strictly slower (setup overhead for no width benefit).
+
+There are exactly two places SIMD could *ever* apply, both minor and off the hot
+path:
+
+- **Collection-time line reconstruction** (expanding hit blocks to line arrays)
+  and path enumeration — these run once per request, not per opcode, so their
+  cost is already negligible in the measurements.
+- **Filter prefix matching** in `xdebug_set_filter` (comparing a filename
+  against include/exclude prefixes) is a `memcmp`, which glibc already
+  vectorizes internally.
+
+So hand-written intrinsics would add portability/build complexity for no
+measurable win. **The bottleneck is call/dispatch overhead and memory access
+patterns, not arithmetic throughput.**
+
+### What *would* improve performance further (in rough ROI order)
+
+1. **Persist the analysis across requests / piggy-back OPcache.** Today each
+   op_array is analysed once *per request* into basic blocks. For
+   long test suites the same files are re-analysed every request. Keying the
+   analysis on file identity + mtime, or attaching it to OPcache's persisted
+   op_arrays, removes that repeated compile-time cost. **Biggest realistic win
+   for real suites.**
+2. **`-march=native` / `-O3` build option.** Not SIMD-specific, but lets the
+   compiler use the host's full ISA and inline more aggressively. Would be an
+   opt-in `./configure` flag (default builds must stay portable for
+   distribution). Small, free-ish gain.
+3. **Skip the handler entirely for already-fully-covered op_arrays.** Once every
+   block of a function is marked hit, further executions record nothing new —
+   we could detect "saturated" op_arrays and stop dispatching into them. Helps
+   hot loops enormously; needs care to stay correct across requests.
+4. **Branch mode: replace the single-slot edge cache with a per-frame last-block
+   slot stored in the frame** to avoid the `execute_data` comparison on every
+   opcode. Micro-optimization of the branch path.
+5. **`likely()`/`unlikely()` hints and `restrict`** on the handler so the
+   compiler lays out the common (coverage-active, wanted-file) path as the
+   straight line. Marginal.
+6. **Reduce work when only line coverage is requested** by hooking fewer opcode
+   types (we currently hook nearly all). Trades some analysis complexity for a
+   smaller per-opcode dispatch surface.
+
+The theme: every remaining win is about **doing the per-opcode work less often**
+(caching, saturation, fewer hooks) or **letting the compiler specialize** — not
+about vectorizing the tiny scalar store, which SIMD cannot help.
 
 ## Install
 
@@ -146,15 +234,8 @@ xdebug_stop_trace();
 echo xdebug_get_profiler_filename();
 ```
 
-Measured on a call-dense workload (`fib(20)` ×200), best of 3:
-
-| | Time | Overhead |
-|---|---|---|
-| no profiler | 0.092 s | 1.0× |
-| **fast-xdebug** | 1.28 s | 13.9× |
-| **Xdebug** | 6.25 s | 67.8× |
-
-→ **~4.9× faster than Xdebug's profiler**, and the gap widens on realistic
+See the [profiler numbers above](#profiling--fib20-200-call-dense):
+**~4.7× faster than Xdebug's profiler**, with the gap widening on realistic
 (less call-dense) workloads because the per-call observer cost is fixed.
 
 ## Step debugging
