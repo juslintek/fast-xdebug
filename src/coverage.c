@@ -155,8 +155,18 @@ static fxd_runtime *fxd_get_runtime(fxd_file *file, zend_string *fnkey, fxd_anal
 	rt->analysis = a;
 	rt->block_hit = ecalloc(a->num_blocks ? a->num_blocks : 1, sizeof(uint8_t));
 	if (FXD_G(coverage_flags) & FXD_CC_BRANCH_CHECK) {
+		uint32_t b, e = 0;
 		rt->edge_hit = ecalloc((a->num_blocks ? a->num_blocks : 1) * FXD_BRANCH_MAX_OUTS,
 		                       sizeof(uint8_t));
+		for (b = 0; b < a->num_blocks; b++) {
+			uint32_t oi;
+			for (oi = 0; oi < a->blocks[b].outs_count; oi++) {
+				if (a->blocks[b].outs[oi] != (uint32_t) -1) {
+					e++;
+				}
+			}
+		}
+		rt->edges_total = e;
 	}
 	zend_hash_add_ptr(&file->functions, fnkey, rt);
 	return rt;
@@ -210,12 +220,30 @@ static zend_always_inline void fxd_mark(zend_execute_data *execute_data)
 	}
 
 	op_array = &execute_data->func->op_array;
+
+	/* Saturation fast-path (pointer compare, no hash lookup): a hot loop
+	 * re-enters the same op_array millions of times. Once its analysis is fully
+	 * recorded for this session, there is nothing new to mark, so a single
+	 * compare against the last-known-saturated opcodes pointer short-circuits
+	 * the ENTIRE handler -- no filter check, no analysis/file/runtime hash
+	 * lookups, no store. This is the dominant cost in hot loops. */
+	if (FXD_G(sat_last_opcodes) == (void *) op_array->opcodes) {
+		return;
+	}
+
 	if (!fxd_file_wanted(op_array->filename)) {
 		return;
 	}
 
 	a = fxd_analysis_for(op_array);
 	if (!a || a->num_blocks == 0) {
+		return;
+	}
+
+	/* Already saturated this session (e.g. the single-slot cache was pointing at
+	 * a different op_array): re-prime the slot and skip. */
+	if (a->sat_saturated && a->sat_generation == FXD_G(sat_generation)) {
+		FXD_G(sat_last_opcodes) = (void *) op_array->opcodes;
 		return;
 	}
 
@@ -245,7 +273,10 @@ static zend_always_inline void fxd_mark(zend_execute_data *execute_data)
 				uint32_t oi;
 				for (oi = 0; oi < a->blocks[pb].outs_count; oi++) {
 					if (a->blocks[pb].outs[oi] == block_id) {
-						rt->edge_hit[pb * FXD_BRANCH_MAX_OUTS + oi] = 1;
+						if (!rt->edge_hit[pb * FXD_BRANCH_MAX_OUTS + oi]) {
+							rt->edge_hit[pb * FXD_BRANCH_MAX_OUTS + oi] = 1;
+							rt->edges_hit++;
+						}
 						break;
 					}
 				}
@@ -259,7 +290,31 @@ static zend_always_inline void fxd_mark(zend_execute_data *execute_data)
 	/* One store: this block executed. Because we hook every opcode, each
 	 * executed block is observed directly at one of its opcodes; no fall-through
 	 * reconstruction or in-flight-frame flushing is required. */
-	rt->block_hit[block_id] = 1;
+	if (!rt->block_hit[block_id]) {
+		rt->block_hit[block_id] = 1;
+		rt->blocks_hit++;
+
+		/* Mark the analysis saturated once every block (and, in branch mode,
+		 * every real edge) has been seen. We only re-evaluate on a *new* block
+		 * hit, so this costs nothing on the hot repeated path. */
+		if (rt->blocks_hit >= a->num_blocks) {
+			zend_bool branch = (FXD_G(coverage_flags) & FXD_CC_BRANCH_CHECK) != 0;
+			if (!branch || rt->edges_hit >= rt->edges_total) {
+				a->sat_saturated = 1;
+				a->sat_generation = FXD_G(sat_generation);
+				FXD_G(sat_last_opcodes) = (void *) op_array->opcodes;
+			}
+		}
+	} else if ((FXD_G(coverage_flags) & FXD_CC_BRANCH_CHECK) && rt->edge_hit &&
+	           !(a->sat_saturated && a->sat_generation == FXD_G(sat_generation)) &&
+	           rt->blocks_hit >= a->num_blocks &&
+	           rt->edges_hit >= rt->edges_total) {
+		/* Branch mode: all blocks were already hit but the final edge may only
+		 * have completed on this (repeat) block visit -- saturate now. */
+		a->sat_saturated = 1;
+		a->sat_generation = FXD_G(sat_generation);
+		FXD_G(sat_last_opcodes) = (void *) op_array->opcodes;
+	}
 }
 
 static int fxd_opcode_handler(zend_execute_data *execute_data)
@@ -389,6 +444,10 @@ void fxd_coverage_start(zend_long flags)
 	FXD_G(edge_last_frame) = NULL;
 	FXD_G(edge_last_rt) = NULL;
 	FXD_G(edge_last_block) = 0;
+	FXD_G(sat_last_opcodes) = NULL;
+	/* Invalidate all prior saturation decisions: a new session (possibly with
+	 * different flags, e.g. branch vs line) must re-record from scratch. */
+	FXD_G(sat_generation)++;
 	/* Record where each active frame is now; keep the *minimum* per analysis so
 	 * lines at or after the start opline in the open block are reportable. */
 	fxd_snapshot_oplines(FXD_G(start_floors), 0);

@@ -12,7 +12,7 @@
 extern zend_module_entry fast_xdebug_module_entry;
 #define phpext_fast_xdebug_ptr &fast_xdebug_module_entry
 
-#define PHP_FAST_XDEBUG_VERSION "0.2.0"
+#define PHP_FAST_XDEBUG_VERSION "0.3.0"
 
 /*
  * Reported Xdebug-compatible version. sebastian/environment and
@@ -68,6 +68,15 @@ ZEND_BEGIN_MODULE_GLOBALS(fast_xdebug)
 	void      *edge_last_frame;
 	void      *edge_last_rt;
 	uint32_t   edge_last_block;
+	/* generation counter bumped on every start_code_coverage(); an analysis is
+	 * considered saturated only if its sat_generation matches this. Lets the
+	 * saturation fast-path reset instantly on a new coverage session without
+	 * walking every cached analysis. */
+	uint32_t   sat_generation;
+	/* single-slot cache: opcodes pointer of the op_array whose analysis is
+	 * saturated in the current session, so a hot loop short-circuits the whole
+	 * handler on a pointer compare -- before any hash lookup. */
+	void      *sat_last_opcodes;
 ZEND_END_MODULE_GLOBALS(fast_xdebug)
 
 ZEND_EXTERN_MODULE_GLOBALS(fast_xdebug)

@@ -26,10 +26,10 @@ profiler or tracer).
   <email>jusys.linas@gmail.com</email>
   <active>yes</active>
  </lead>
- <date>2026-09-10</date>
+ <date>2026-09-11</date>
  <version>
-  <release>0.2.0</release>
-  <api>0.2.0</api>
+  <release>0.3.0</release>
+  <api>0.3.0</api>
  </version>
  <stability>
   <release>alpha</release>
@@ -37,9 +37,11 @@ profiler or tracer).
  </stability>
  <license uri="https://opensource.org/licenses/BSD-2-Clause">BSD-2-Clause</license>
  <notes>
-0.2.0: adds a Cachegrind profiler (~5x faster than Xdebug's profiler) via
-zend_observer, alongside the existing line/branch/path coverage. Step
-debugging (DBGp) is specified but not yet implemented. PHP 8.2-8.5, NTS/ZTS.
+0.3.0: saturation fast-path -- once an op_array is fully covered, the
+per-opcode handler short-circuits it, making line coverage ~1.9x faster than
+0.2.0 (below pcov on the benchmark). Adds opt-in --enable-fast-xdebug-native
+(-O3 -march=native; default build stays portable). Coverage + Cachegrind
+profiler; step debugging (DBGp) still specified-not-implemented. PHP 8.2-8.5.
  </notes>
  <contents>
   <dir name="/">

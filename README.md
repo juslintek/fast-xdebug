@@ -28,15 +28,18 @@ Memoised recursion, `if/elseif` ladders, `in_array`/loop bodies, 4000 iterations
 | Engine | Line coverage | Branch + path coverage |
 |---|---|---|
 | no coverage | 0.0075 s (1.0×) | — |
-| **pcov** | 0.0497 s (6.6×) | ❌ not supported¹ |
-| **Xdebug 3.6** | 0.1473 s (19.6×) | 0.8945 s (**119×**) |
-| **fast-xdebug** | **0.0566 s (7.5×)** | **0.0606 s (8.1×)** |
+| **pcov** | 0.0494 s (6.6×) | ❌ not supported¹ |
+| **Xdebug 3.6** | 0.1463 s (19.5×) | 0.8769 s (**117×**) |
+| **fast-xdebug** | **0.0307 s (4.1×)** | **0.0626 s (8.3×)** |
 
-- Line coverage: **~2.6× faster than Xdebug**, ~1.14× the cost of pcov.
-- Branch + path: **~14.8× faster than Xdebug**, and — the key result — it costs
-  essentially the **same as fast-xdebug's own line coverage** (0.061 s vs
-  0.057 s), because path enumeration happens once at collection time, not per
-  opcode. Xdebug pays ~6× more for branch than line coverage; fast-xdebug pays ~1×.
+- Line coverage: **~4.8× faster than Xdebug — and faster than pcov** (0.031 s vs
+  0.049 s), while pcov cannot do branch/path at all. The
+  [saturation fast-path](#why-it-is-faster) is what pushes line coverage below
+  pcov here.
+- Branch + path: **~14× faster than Xdebug**, and — the key result — it costs
+  essentially the **same as fast-xdebug's own line coverage** because path
+  enumeration happens once at collection time, not per opcode. Xdebug pays ~6×
+  more for branch than line coverage; fast-xdebug pays ~2×.
 
 ### Profiling — `fib(20) ×200` (call-dense)
 
@@ -77,6 +80,14 @@ fast-xdebug:
    per-line work.
 3. **Reconstructs lines, branches and paths only at collection time**, which is
    why branch/path coverage costs the same at runtime as line coverage.
+4. **Saturation fast-path.** Once every block of an `op_array` has been recorded
+   (and, in branch mode, every CFG edge), re-executing it can record nothing
+   new. A single-slot pointer compare then short-circuits the whole handler
+   *before any hash lookup*. This is why line coverage on the benchmark dropped
+   below pcov: the production code exercised by a test suite is fully covered
+   early, then runs "for free" across the remaining thousands of invocations.
+   (It does not help a *single* monolithic loop — a function's exit block isn't
+   covered until the loop finishes — which is inherent, not a bug.)
 
 Full rationale, C4 diagrams, and the measured baseline are in
 [`docs/design.md`](docs/design.md) and [`docs/decisions/`](docs/decisions).
@@ -121,34 +132,39 @@ So hand-written intrinsics would add portability/build complexity for no
 measurable win. **The bottleneck is call/dispatch overhead and memory access
 patterns, not arithmetic throughput.**
 
-### What *would* improve performance further (in rough ROI order)
+### What has been done, and what could improve performance further
 
-1. **Persist the analysis across requests / piggy-back OPcache.** Today each
-   op_array is analysed once *per request* into basic blocks. For
-   long test suites the same files are re-analysed every request. Keying the
-   analysis on file identity + mtime, or attaching it to OPcache's persisted
-   op_arrays, removes that repeated compile-time cost. **Biggest realistic win
-   for real suites.**
-2. **`-march=native` / `-O3` build option.** Not SIMD-specific, but lets the
-   compiler use the host's full ISA and inline more aggressively. Would be an
-   opt-in `./configure` flag (default builds must stay portable for
-   distribution). Small, free-ish gain.
-3. **Skip the handler entirely for already-fully-covered op_arrays.** Once every
-   block of a function is marked hit, further executions record nothing new —
-   we could detect "saturated" op_arrays and stop dispatching into them. Helps
-   hot loops enormously; needs care to stay correct across requests.
-4. **Branch mode: replace the single-slot edge cache with a per-frame last-block
-   slot stored in the frame** to avoid the `execute_data` comparison on every
-   opcode. Micro-optimization of the branch path.
-5. **`likely()`/`unlikely()` hints and `restrict`** on the handler so the
-   compiler lays out the common (coverage-active, wanted-file) path as the
-   straight line. Marginal.
-6. **Reduce work when only line coverage is requested** by hooking fewer opcode
-   types (we currently hook nearly all). Trades some analysis complexity for a
-   smaller per-opcode dispatch surface.
+**Done (v0.3.0):**
+
+- ✅ **Saturation fast-path** — the biggest realistic win for test suites (see
+  point 4 above). Line coverage on the benchmark went from 0.058 s → 0.031 s
+  (~1.9×), overtaking pcov.
+- ✅ **Opt-in `-O3 -march=native` build** via
+  `./configure --enable-fast-xdebug-native` (default stays portable — no
+  `-march` — so distributed/PECL/PIE binaries run everywhere). On the benchmark
+  this was within noise, consistent with the workload being dispatch/memory-
+  bound rather than arithmetic-bound; it may help on other CPUs/workloads, so
+  it's offered but not overclaimed.
+
+**Considered and deliberately *not* done:**
+
+- **Persist analysis across requests / OPcache reuse.** Tempting on paper, but
+  the dominant consumer (PHPUnit on the CLI SAPI) is **one request per
+  process**, so a cross-request cache buys nothing there while adding lifetime
+  and stale-`mtime` risk. It would only help a long-lived FPM worker collecting
+  coverage across many requests — a rare setup. Skipped rather than ship risk
+  for no real-world gain.
+
+**Remaining candidates (smaller):**
+
+- **Branch mode: per-frame last-block slot** instead of the single-slot edge
+  cache, to drop the `execute_data` comparison per opcode.
+- **`likely()`/`unlikely()` + `restrict`** on the handler to straight-line the
+  common path.
+- **Hook fewer opcode types** when only line coverage is requested.
 
 The theme: every remaining win is about **doing the per-opcode work less often**
-(caching, saturation, fewer hooks) or **letting the compiler specialize** — not
+(saturation, fewer hooks) or **letting the compiler specialize** — not
 about vectorizing the tiny scalar store, which SIMD cannot help.
 
 ## Install
@@ -177,6 +193,11 @@ phpize
 ./configure --enable-fast-xdebug --with-php-config="$(command -v php-config)"
 make -j"$(nproc)"
 ```
+
+For a build you run on the same machine you compile on (e.g. a self-hosted CI
+runner), add `--enable-fast-xdebug-native` to tune for the host CPU
+(`-O3 -march=native`). **Do not** use it for a binary you distribute — it will
+only run on CPUs matching the build host. The default build is portable.
 
 Then load it as a **normal module** (not a Zend extension):
 

@@ -50,6 +50,13 @@ typedef struct _fxd_analysis {
 	/* Identity used for opcache-safe caching / debugging. */
 	zend_string *filename;
 	zend_string *function_name;        /* "{main}", "Class::method", "Ns\\func" */
+	/* Saturation fast-path (per coverage session, guarded by sat_generation):
+	 * once every recordable block/edge of this op_array has been seen, the
+	 * per-opcode handler can skip it entirely -- the dominant win for hot loops.
+	 * Validity is scoped to a session via sat_generation == FXD_G(sat_generation);
+	 * a stale generation means "not saturated in the current session". */
+	uint32_t   sat_generation;
+	zend_bool  sat_saturated;
 } fxd_analysis;
 
 /*
@@ -61,6 +68,9 @@ typedef struct _fxd_runtime {
 	fxd_analysis *analysis;
 	uint8_t      *block_hit;           /* array[num_blocks] */
 	uint8_t      *edge_hit;            /* array[num_blocks * FXD_BRANCH_MAX_OUTS] */
+	uint32_t      blocks_hit;          /* distinct blocks marked */
+	uint32_t      edges_hit;           /* distinct edges marked (branch mode) */
+	uint32_t      edges_total;         /* total real (non-exit) edges in the CFG */
 } fxd_runtime;
 
 /* Per-file aggregate of everything observed for a filename this request. */
