@@ -9,6 +9,10 @@ jobs:
   build-and-test:
     name: PHP ${{ matrix.php }} (${{ matrix.ts }})
     runs-on: ubuntu-latest
+    # A ZTS runner build depends on an external (ondrej/php) ZTS package that is
+    # not always available; don't let its absence fail the whole matrix. The NTS
+    # rows across 8.2-8.5 are the blocking gate.
+    continue-on-error: ${{ matrix.ts == 'zts' }}
     strategy:
       fail-fast: false
       matrix:
@@ -24,9 +28,8 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
-          # request the ZTS build when matrix.ts == zts
-          # (setup-php exposes this via the `phpts` input on 2.x)
         env:
+          # setup-php: "nts" (default) or "ts"/"zts" for a thread-safe build.
           phpts: ${{ matrix.ts }}
 
       - name: Install build + validation tooling
