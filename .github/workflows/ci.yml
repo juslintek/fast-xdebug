@@ -52,71 +52,27 @@ jobs:
             echo swiftcov_engine(), " OK\n";
           '
 
-          # ======================================================================
-          # >>> TEMPORARY DIAGNOSTIC (remove once CI is green) <<<
-          # TODO(PR #1): DELETE THIS ENTIRE BLOCK once the load-time SIGSEGV is
-          # resolved and CI is green. Tracking: github.com/juslintek/fast-xdebug
-          # pull/1 (search this file for "TEMPORARY DIAGNOSTIC" before release).
-          # Added for PR #1 to diagnose a load-time SIGSEGV that only reproduces
-          # under ondrej/setup-php (opcache+JIT on) and NOT in the offline sandbox.
-          # These lines print an actionable backtrace and confirm/deny the
-          # opcache-JIT root-cause hypothesis. They are diagnostic-only and are
-          # guarded with '|| true' so they NEVER fail this step by themselves.
-          # ----------------------------------------------------------------------
-          # SMOKE is the EXACT payload of the gating smoke run above, so the gdb
-          # backtrace below traces the precise `php -n -d extension=... -r <SMOKE>`
-          # invocation that crashes -- guaranteeing the next CI run yields the
-          # real stack trace of the failing path (not a different process).
-          SMOKE='
-            assert(extension_loaded("xdebug"));
-            assert(version_compare(phpversion("xdebug"), "3.1", ">="));
-            assert(in_array("coverage", xdebug_info("mode"), true));
-            echo swiftcov_engine(), " OK\n";
-          '
+      - name: .phpt test suite
+        run: |
+          # Primary, GATING run: run-tests.php over the suite with the extension
+          # loaded the way a user runs it (opcache remains co-loadable, which is
+          # exactly what surfaced the load-time crash). Its exit status gates the job.
+          php -n run-tests.php -q -p "$(command -v php)" \
+            -d extension="$PWD/modules/swiftcov.so" tests/*.phpt
 
-          # Allow core dumps so a trace is recoverable even if the live gdb run
-          # below cannot attach for some reason.
-          ulimit -c unlimited || true
-
-          echo "::group::[DIAGNOSTIC] gdb backtrace of the EXACT gating smoke run"
-          # Run under gdb; try the rich trace first, then fall back to a plain
-          # 'bt' so we still capture a stack even if 'bt full' is unavailable.
+          # TEMPORARY FALLBACK (PR #1): remove once CI is confirmed green.
+          # Diagnostic-only. If the gating run above went red, re-run the SAME
+          # command under gdb purely to surface the .phpt child stack trace.
+          # Guarded with '|| true' so it can NEVER change this step's pass/fail
+          # outcome; the gating run-tests result above is the sole gate.
           gdb -batch \
             -ex 'set pagination off' \
             -ex run \
             -ex 'bt full' \
             -ex 'bt' \
-            -ex 'info registers' \
             -ex 'thread apply all bt' \
-            --args php -n -d extension="$PWD/modules/swiftcov.so" -r "$SMOKE" || true
-          echo "::endgroup::"
-
-          # JIT-hypothesis control runs. Locate opcache.so gracefully (may be absent).
-          OPCACHE_SO="$(php -n -r 'foreach (explode(PATH_SEPARATOR, ini_get("extension_dir") ?: "") as $d) { $p = $d . "/opcache.so"; if (is_file($p)) { echo $p; break; } }' 2>/dev/null || true)"
-
-          echo "::group::[DIAGNOSTIC] smoke run with opcache + JIT explicitly ON (JIT-on path)"
-          if [ -n "$OPCACHE_SO" ]; then
-            php -n -d extension="$PWD/modules/swiftcov.so" \
-              -d zend_extension="$OPCACHE_SO" \
-              -d opcache.enable_cli=1 -d opcache.jit_buffer_size=64M -d opcache.jit=tracing \
-              -r "$SMOKE" || true
-          else
-            echo "[DIAGNOSTIC] opcache.so not found in extension_dir; skipping JIT-on control." || true
-          fi
-          echo "::endgroup::"
-
-          echo "::group::[DIAGNOSTIC] smoke run with opcache explicitly OFF (JIT-off path)"
-          php -n -d extension="$PWD/modules/swiftcov.so" \
-            -d opcache.enable_cli=0 \
-            -r "$SMOKE" || true
-          echo "::endgroup::"
-          # >>> END TEMPORARY DIAGNOSTIC <<<
-          # ======================================================================
-
-      - name: .phpt test suite
-        run: |
-          php -n run-tests.php -q -p "$(command -v php)" \
-            -d extension="$PWD/modules/swiftcov.so" tests/*.phpt
+            --args php -n run-tests.php -q -p "$(command -v php)" \
+            -d extension="$PWD/modules/swiftcov.so" tests/*.phpt || true
 
       - name: Valgrind — frameless internal-call regression
         run: |
