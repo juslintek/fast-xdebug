@@ -23,6 +23,7 @@
 #include "zend_execute.h"
 #include "zend_extensions.h"
 #include "zend_exceptions.h"
+#include "zend_vm.h"
 
 #include "../php_swiftcov.h"
 #include "coverage.h"
@@ -58,6 +59,13 @@ static user_opcode_handler_t fxd_prev_handler[256];
 
 /* The set of opcodes that terminate a basic block (and that we hook). */
 static uint8_t fxd_terminator[256];
+
+/* Whether our opcode handlers are currently installed in the VM's global
+ * user_opcode_handler table. Handlers are installed lazily only while a
+ * coverage session is active (see fxd_install_handlers / fxd_remove_handlers)
+ * so that processes which never start coverage -- and processes co-loaded with
+ * OPcache -- never carry a permanent global opcode hook. */
+static zend_bool fxd_handlers_installed = 0;
 
 /* ---- filter helpers ---------------------------------------------------- */
 
@@ -377,9 +385,89 @@ static int fxd_opcode_handler(zend_execute_data *execute_data)
  * per-opcode work is one array write with no hash lookup, no filter-slot
  * dereference and no per-line set insert, which is why it is still far cheaper.
  */
+/*
+ * Re-select the VM handler for every opline of one op_array.
+ *
+ * zend_set_user_opcode_handler() only changes the global user-opcode table;
+ * op_arrays that were ALREADY COMPILED before that call still have their
+ * per-opline ->handler pointers baked in and would bypass our hook. Because we
+ * install lazily (at fxd_coverage_start, after the script and its functions
+ * are compiled), we must walk each already-compiled op_array and ask the VM to
+ * recompute each opline's handler from the current user-opcode table via
+ * zend_vm_set_opcode_handler(). On remove the user table has been restored, so
+ * the same walk resets the oplines to their non-hooked handlers. This is the
+ * same op_array-patching pcov performs when it toggles coverage. Only real
+ * user op_arrays with opcodes are patched. */
+static void fxd_patch_op_array(zend_op_array *op_array)
+{
+	uint32_t i;
+	if (!op_array || op_array->type != ZEND_USER_FUNCTION || !op_array->opcodes) {
+		return;
+	}
+	for (i = 0; i < op_array->last; i++) {
+		zend_vm_set_opcode_handler(&op_array->opcodes[i]);
+	}
+}
+
+/* Walk every compiled user op_array reachable from the engine (top-level
+ * functions, class methods) plus the op_arrays of all live frames, re-selecting
+ * their opline handlers so an install/remove toggle takes effect on code that
+ * was compiled before the toggle. */
+static void fxd_patch_all_op_arrays(void)
+{
+	zend_function *func;
+	zend_class_entry *ce;
+	zend_execute_data *ex;
+
+	ZEND_HASH_FOREACH_PTR(EG(function_table), func) {
+		if (func->type == ZEND_USER_FUNCTION) {
+			fxd_patch_op_array(&func->op_array);
+		}
+	} ZEND_HASH_FOREACH_END();
+
+	ZEND_HASH_FOREACH_PTR(EG(class_table), ce) {
+		zend_function *m;
+		if (!ce->function_table.nNumUsed) {
+			continue;
+		}
+		ZEND_HASH_FOREACH_PTR(&ce->function_table, m) {
+			if (m->type == ZEND_USER_FUNCTION && m->op_array.scope == ce) {
+				fxd_patch_op_array(&m->op_array);
+			}
+		} ZEND_HASH_FOREACH_END();
+	} ZEND_HASH_FOREACH_END();
+
+	/* The currently-running frames (e.g. the {main} op_array that called
+	 * xdebug_start_code_coverage) are not necessarily in the function table. */
+	ex = EG(current_execute_data);
+	while (ex) {
+		if (ex->func && ex->func->type == ZEND_USER_FUNCTION) {
+			fxd_patch_op_array(&ex->func->op_array);
+		}
+		ex = ex->prev_execute_data;
+	}
+}
+
+/*
+ * Install our opcode hook. LAZY and idempotent: called only inside
+ * fxd_coverage_start() (before coverage_active is set) and undone by
+ * fxd_remove_handlers() on stop / request shutdown. Installing here rather than
+ * at MINIT means (a) processes/scripts that never start a coverage session
+ * install ZERO opcode handlers -- so swiftcov cannot crash when co-loaded with
+ * the system Zend OPcache on the first opcode of a SKIPIF/FILE child -- and
+ * (b) fxd_prev_handler[] captures whatever chained handler is in place AFTER
+ * opcache has fully initialised, so we correctly chain to it.
+ */
 static void fxd_install_handlers(void)
 {
 	int op;
+	if (fxd_handlers_installed) {
+		/* Already live: never re-capture fxd_prev_handler (a start() without a
+		 * matching stop() must not record our own handler as the "previous"
+		 * one, which would create an infinite chain). */
+		return;
+	}
+	memset(fxd_prev_handler, 0, sizeof(fxd_prev_handler));
 	for (op = 0; op < 256; op++) {
 		/* Skip opcodes that never carry meaningful coverage / are hot no-ops. */
 		if (op == ZEND_NOP || op == ZEND_EXT_NOP || op == ZEND_OP_DATA) {
@@ -388,13 +476,46 @@ static void fxd_install_handlers(void)
 		fxd_prev_handler[op] = zend_get_user_opcode_handler((uint8_t) op);
 		zend_set_user_opcode_handler((uint8_t) op, fxd_opcode_handler);
 	}
+	/* Route already-compiled op_arrays through the freshly-registered hook. */
+	fxd_patch_all_op_arrays();
+	fxd_handlers_installed = 1;
+}
+
+/*
+ * Undo fxd_install_handlers(): restore each opcode's previously-saved handler
+ * pointer (including NULL) so any other extension's chained handler is put
+ * back exactly as it was, leaving the VM's opcode table clean once the
+ * coverage session ends. Uses the SAME op-skip set as install so the tables
+ * stay symmetric, and is a no-op when nothing is installed.
+ */
+static void fxd_remove_handlers(void)
+{
+	int op;
+	if (!fxd_handlers_installed) {
+		return;
+	}
+	for (op = 0; op < 256; op++) {
+		if (op == ZEND_NOP || op == ZEND_EXT_NOP || op == ZEND_OP_DATA) {
+			continue;
+		}
+		zend_set_user_opcode_handler((uint8_t) op, fxd_prev_handler[op]);
+	}
+	/* Reset already-compiled op_arrays to their non-hooked handlers now that the
+	 * global user-opcode table has been restored. */
+	fxd_patch_all_op_arrays();
+	memset(fxd_prev_handler, 0, sizeof(fxd_prev_handler));
+	fxd_handlers_installed = 0;
 }
 
 void fxd_coverage_minit(void)
 {
+	/* Deliberately do NOT install opcode handlers at MINIT: installation is
+	 * lazy (fxd_coverage_start) so that a process which never starts a coverage
+	 * session -- including run-tests.php SKIPIF/FILE probes and swiftcov
+	 * co-loaded with OPcache -- carries no global opcode hook. We keep the
+	 * one-time zeroing of the saved-handler / terminator tables here. */
 	memset(fxd_prev_handler, 0, sizeof(fxd_prev_handler));
 	memset(fxd_terminator, 0, sizeof(fxd_terminator));
-	fxd_install_handlers();
 }
 
 void fxd_coverage_rinit(void)
@@ -409,6 +530,12 @@ void fxd_coverage_rinit(void)
 
 void fxd_coverage_rshutdown(void)
 {
+	/* Defensive: a request that started coverage but never stopped it (script
+	 * fatal / exit) must not leave our handler installed into the next request
+	 * served by the same process (CLI-server / fpm worker reuse). No-op when
+	 * nothing is installed. */
+	fxd_remove_handlers();
+
 	if (fxd_analysis_cache_inited) {
 		zend_hash_destroy(&fxd_analysis_cache);
 		fxd_analysis_cache_inited = 0;
@@ -475,6 +602,10 @@ void fxd_coverage_start(zend_long flags)
 		zend_hash_init(FXD_G(start_floors), 8, NULL, NULL, 0);
 	}
 	FXD_G(coverage_flags) = flags;
+	/* Install the opcode handlers now, BEFORE marking the session active, so
+	 * fxd_prev_handler[] captures the currently-chained handlers with opcache
+	 * fully initialised and our handler is live for the whole session. */
+	fxd_install_handlers();
 	FXD_G(coverage_active) = 1;
 	FXD_G(edge_last_frame) = NULL;
 	FXD_G(edge_last_rt) = NULL;
@@ -515,6 +646,9 @@ void fxd_coverage_start(zend_long flags)
 void fxd_coverage_stop(void)
 {
 	FXD_G(coverage_active) = 0;
+	/* Restore the VM's opcode handler table. Guarded by fxd_handlers_installed,
+	 * so a double-stop or a stop-without-start is safe (no-op). */
+	fxd_remove_handlers();
 }
 
 zend_bool fxd_coverage_started(void)
