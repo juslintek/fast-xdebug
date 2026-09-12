@@ -412,15 +412,21 @@ memory.
 
 ## Tool integration
 
-| Tool | Works? | How |
-|---|---|---|
-| **PHPUnit** (line/branch/path coverage) | ✅ | auto-detected as the Xdebug driver; run `--coverage-*` / `--path-coverage` as usual |
-| **php-code-coverage** (Clover, Cobertura, HTML, Crap4J) | ✅ | same driver path; Cobertura carries branch data |
-| **GitLab / GitHub coverage** | ✅ | consumes the Cobertura/Clover output unchanged |
-| **Paratest / Codeception** | ✅ | detected by `xdebug.mode=auto`; uses the coverage path |
-| **KCachegrind / qcachegrind** | ✅ | open the `cachegrind.out.*` the profiler writes |
-| **PhpStorm / VS Code — profiling** | ✅ | import the Cachegrind snapshot |
-| **PhpStorm / VS Code — step debugging** | ❌ | not implemented (see [Step debugging](#step-debugging)); with `xdebug.mode=debug` it prints a notice rather than half-opening a DBGp session |
+The table below is the summary; the full matrix — every consumer, the **exact
+runtime probe it makes**, swiftcov's result, and the `.phpt` test that
+reproduces that probe — lives in
+[`docs/tool-compatibility.md`](docs/tool-compatibility.md).
+
+| Tool | Works? | Probe it makes | How |
+|---|---|---|---|
+| **sebastian/environment** (`Runtime::hasXdebug`/`getXdebugVersion`) | ✅ | `extension_loaded('xdebug')`, `phpversion('xdebug') >= 3.1` | both answered so php-code-coverage picks the Xdebug driver |
+| **PHPUnit** (line/branch/path coverage) | ✅ | drives php-code-coverage's `XdebugDriver` | auto-detected; run `--coverage-*` / `--path-coverage` as usual |
+| **php-code-coverage** (Clover, Cobertura, HTML, Crap4J) | ✅ | `xdebug_info('mode')`, `XDEBUG_CC_*`, `xdebug_start/stop/get_code_coverage`, `xdebug_set_filter` | same driver path; Cobertura carries branch data (`op_start`…`out_hit`, `path`/`hit`) |
+| **GitLab / GitHub / Codecov / Coveralls** | ✅ | Cobertura `branches-valid`/`branches-covered`, Clover | consumes the report output unchanged |
+| **Paratest / Codeception / Infection** | ✅ | `xdebug.mode` contains `coverage`; test-runner autodetect | detected by `xdebug.mode=auto`; uses the coverage path |
+| **symfony/error-handler / PHPUnit error handling** | ✅ | `xdebug_is_debugger_active()` | returns `false` (no step debugger attached) |
+| **KCachegrind / qcachegrind / PhpStorm / Blackfire** | ✅ | reads `cachegrind.out.*` | open the file the profiler writes |
+| **PhpStorm / VS Code — step debugging** | ❌ | DBGp protocol; `xdebug_break()` | not implemented (see [Step debugging](#step-debugging)); with `xdebug.mode=debug` it prints a notice rather than half-opening a DBGp session |
 
 ## Profiling
 

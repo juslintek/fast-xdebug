@@ -560,6 +560,21 @@ PHP_FUNCTION(fast_xdebug_resolved_mode)
 	RETURN_STRING((char *) fxd_resolve_mode());
 }
 
+/* xdebug_is_debugger_active(): bool
+ *
+ * Named consumer: symfony/error-handler (ErrorHandler::handleError) and
+ * PHPUnit's error handling call xdebug_is_debugger_active() whenever
+ * extension_loaded('xdebug') is true, to decide whether a step-debugger is
+ * attached before touching error display. Because we register as "xdebug",
+ * these call sites reach us; without this function they hit an
+ * "undefined function" fatal. swiftcov never runs a DBGp debugger, so the
+ * honest, safe answer is always false. See docs/tool-compatibility.md. */
+PHP_FUNCTION(xdebug_is_debugger_active)
+{
+	ZEND_PARSE_PARAMETERS_NONE();
+	RETURN_FALSE;
+}
+
 /* ---- function table ---------------------------------------------------- */
 
 static const zend_function_entry swiftcov_functions[] = {
@@ -577,6 +592,8 @@ static const zend_function_entry swiftcov_functions[] = {
 	PHP_FE(swiftcov_engine,              arginfo_fxd_void)
 	PHP_FE(swiftcov_resolved_mode,       arginfo_fxd_void)
 	PHP_FE(swiftcov_recommended_settings, arginfo_fxd_void)
+	/* honest "no step debugger" probe for symfony/error-handler + PHPUnit */
+	PHP_FE(xdebug_is_debugger_active,    arginfo_fxd_void)
 	/* fast_xdebug_* BC aliases (kept working for anything already using them) */
 	PHP_FE(fast_xdebug_engine,           arginfo_fxd_void)
 	PHP_FE(fast_xdebug_resolved_mode,    arginfo_fxd_void)
