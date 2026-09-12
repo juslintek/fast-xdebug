@@ -1,8 +1,77 @@
 # Changelog
 
-All notable changes to fast-xdebug are documented here. Versions are alpha;
+All notable changes to swiftcov (formerly fast-xdebug) are documented here.
+Versions are alpha;
 the API surface tracks the subset of Xdebug's coverage/profiler API that
 php-code-coverage / PHPUnit / Cachegrind tooling consume.
+
+## [0.5.0] - 2026-09-11
+
+### Changed
+- **Distinct, publishable product/package identity: `swiftcov`.** The
+  build/package name is renamed from `fast_xdebug` to `swiftcov` across the
+  build system and distribution metadata: `config.m4`/`config.w32`
+  (`--enable-swiftcov`, `PHP_NEW_EXTENSION(swiftcov)`, `HAVE_SWIFTCOV`), the
+  source file (`fast_xdebug.c` -> `swiftcov.c`) and header (`php_fast_xdebug.h`
+  -> `php_swiftcov.h`, `PHP_SWIFTCOV_VERSION`), `composer.json`
+  (`juslintek/swiftcov`, `php-ext.extension-name` `swiftcov`), `package.xml`
+  (`<name>`/`<providesextension>` `swiftcov`), and `install.sh` (produces
+  `modules/swiftcov.so`). Because the package name no longer contains the word
+  "xdebug", PECL/PIE/Packagist can accept it and trademark friction is avoided.
+- The **RUNTIME identity is unchanged**: the `zend_module_entry` name is still
+  the literal string `"xdebug"`, so `extension_loaded('xdebug')`,
+  `phpversion('xdebug') >= 3.1` and `xdebug_info('mode')` all keep working for
+  php-code-coverage / PHPUnit. See `docs/decisions/0003-product-identity-vs-runtime-name.md`.
+
+### Added
+- Canonical sentinel helpers `swiftcov_engine()`, `swiftcov_resolved_mode()`
+  and `swiftcov_recommended_settings()`. `swiftcov_engine()` returns a
+  swiftcov-branded string. The previous `fast_xdebug_engine()`,
+  `fast_xdebug_resolved_mode()` and `fast_xdebug_recommended_settings()` are
+  retained as documented BC aliases (they share the same handlers and now also
+  return the swiftcov-branded engine string).
+- `xdebug_info()` now reports `"engine" => "swiftcov (fast-xdebug)"` so the
+  product identity is self-describing while remaining detectable as not-real-Xdebug.
+- New `.phpt` test `tests/002-product-identity.phpt` asserting the runtime still
+  answers as `xdebug` while the product sentinels are swiftcov-branded.
+
+### Fixed
+- **swiftcov cannot be co-loaded with the real Xdebug.** Because swiftcov
+  registers its `zend_module_entry` name as the literal string `"xdebug"`
+  (ADR-0001), loading swiftcov on top of an already-loaded real Xdebug
+  registers two modules named `"xdebug"`, which PHP reports as
+  `Module "xdebug" is already loaded` and then crashes with a SIGSEGV in
+  `php_module_startup`. CI and consumers must remove the real Xdebug (and any
+  other coverage driver claiming that name) before loading swiftcov. The
+  GitHub Actions workflows now pass `coverage: none` and
+  `extensions: ":xdebug, :pcov"` to `shivammathur/setup-php` so the real
+  Xdebug is never present when swiftcov loads. See ADR-0001 and the README
+  note that swiftcov "cannot be loaded at the same time as real Xdebug".
+- **Load-time crash-safety hardening.** The per-opcode handler
+  (`fxd_opcode_handler`) now NULL-guards `execute_data`/`opline` before
+  dereferencing, so an unexpected VM state (e.g. an opcache/JIT edge case)
+  dispatches safely to the engine instead of segfaulting. User opcode handlers
+  are installed lazily (only around an active coverage session), and op_arrays
+  backed by OPcache shared memory are skipped when toggling those hooks under a
+  co-loaded OPcache. The previous best-effort `MINIT` OPcache-JIT force-disable
+  hook was **removed**: PHP already auto-disables JIT once user opcode handlers
+  are installed (making the hook redundant), and altering opcache INI during
+  `MINIT` while OPcache initialises was implicated in the co-loaded-OPcache
+  load-time SIGSEGV under investigation on PR #1.
+- **Infrastructure adoption tooling and roadmap.** `docs/adoption-roadmap.md`
+  lays out the compatibility-first rollout, risk controls, phased distribution
+  plan, the long-term first-class php-code-coverage driver end-state, and
+  observability/rollback. One-line adoption paths ship with it: a reusable
+  GitHub composite action (`.github/actions/setup-swiftcov`), a reusable GitHub
+  workflow (`.github/workflows/reusable-coverage.yml`), a GitLab `include:`
+  template (`ci/templates/swiftcov.gitlab-ci.yml`), and an advisory bootstrap
+  helper (`scripts/swiftcov-bootstrap.php`) that prints a tuned ini snippet
+  without mutating anything. README gains an "Adopting in infrastructure"
+  section pointing at them.
+
+### Notes
+- No behavioural change to line/branch/path coverage output; still
+  byte-identical lines to pcov/Xdebug. 16 `.phpt` tests (4 new).
 
 ## [0.4.0] - 2026-09-11
 

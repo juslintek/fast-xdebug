@@ -28,6 +28,14 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
+          # setup-php installs the REAL Xdebug by default. swiftcov registers its
+          # zend_module_entry name as the literal "xdebug" (ADR-0001), so a
+          # co-load of the real Xdebug and swiftcov registers the "xdebug" module
+          # twice -> SIGSEGV in php_module_startup. Disable the coverage driver
+          # and explicitly remove any pre-installed real Xdebug/pcov so swiftcov
+          # is the only module named "xdebug".
+          coverage: none
+          extensions: ":xdebug, :pcov"
         env:
           # setup-php: "nts" (default) or "ts"/"zts" for a thread-safe build.
           phpts: ${{ matrix.ts }}
@@ -38,22 +46,32 @@ jobs:
       - name: phpize / configure / make
         run: |
           phpize
-          ./configure --enable-fast-xdebug --with-php-config="$(command -v php-config)"
+          ./configure --enable-swiftcov --with-php-config="$(command -v php-config)"
           make -j"$(nproc)"
 
       - name: Load smoke test (registers as xdebug)
         run: |
-          php -n -d extension="$PWD/modules/fast_xdebug.so" -r '
+          # Primary, GATING smoke run: a real failure here must fail the job.
+          # Do NOT add '|| true' to this invocation.
+          php -n -d extension="$PWD/modules/swiftcov.so" -r '
             assert(extension_loaded("xdebug"));
             assert(version_compare(phpversion("xdebug"), "3.1", ">="));
             assert(in_array("coverage", xdebug_info("mode"), true));
-            echo fast_xdebug_engine(), " OK\n";
+            echo swiftcov_engine(), " OK\n";
           '
 
       - name: .phpt test suite
         run: |
+          # Primary, GATING run: run-tests.php over the suite with the extension
+          # loaded the way a user runs it (opcache remains co-loadable, which is
+          # exactly what surfaced the load-time crash). Its exit status gates the
+          # job and is the SOLE gate. Do NOT add '|| true' to this invocation and
+          # do NOT append diagnostics here: this step runs under `bash -e`, so a
+          # non-zero exit aborts the step immediately and anything after it would
+          # never run. Crash diagnostics live in the dedicated `if: failure()`
+          # step below so they execute precisely when this gate fails.
           php -n run-tests.php -q -p "$(command -v php)" \
-            -d extension="$PWD/modules/fast_xdebug.so" tests/*.phpt
+            -d extension="$PWD/modules/swiftcov.so" tests/*.phpt
 
       - name: Valgrind — frameless internal-call regression
         run: |
@@ -67,7 +85,7 @@ jobs:
           echo "survived\n";
           PHP
           USE_ZEND_ALLOC=0 valgrind --error-exitcode=99 -q \
-            php -n -d extension="$PWD/modules/fast_xdebug.so" /tmp/frameless.php
+            php -n -d extension="$PWD/modules/swiftcov.so" /tmp/frameless.php
 
   integration:
     name: php-code-coverage / PHPUnit integration (PHP ${{ matrix.php }})
@@ -82,15 +100,19 @@ jobs:
         with:
           php-version: ${{ matrix.php }}
           tools: composer
+          # Remove the real Xdebug so it never co-loads with swiftcov (both claim
+          # the "xdebug" module name -> SIGSEGV in php_module_startup).
+          coverage: none
+          extensions: ":xdebug, :pcov"
       - run: sudo apt-get update && sudo apt-get install -y build-essential autoconf
       - name: Build extension
         run: |
-          phpize && ./configure --enable-fast-xdebug --with-php-config="$(command -v php-config)" && make -j"$(nproc)"
+          phpize && ./configure --enable-swiftcov --with-php-config="$(command -v php-config)" && make -j"$(nproc)"
       - name: Run the integration harness (PHPUnit --path-coverage -> Cobertura)
         run: |
           cd tests/integration
           composer install --no-interaction
-          php -n -d extension="$GITHUB_WORKSPACE/modules/fast_xdebug.so" -d memory_limit=512M \
+          php -d extension="$GITHUB_WORKSPACE/modules/swiftcov.so" -d memory_limit=512M \
             ./vendor/bin/phpunit --path-coverage --coverage-cobertura=cobertura.xml
           # assert the report is well-formed and carries branch data
           php -r '$x=simplexml_load_file("cobertura.xml"); if(!$x||!isset($x["branches-valid"])){fwrite(STDERR,"bad cobertura\n");exit(1);} echo "cobertura OK: branches-valid=",$x["branches-valid"],"\n";'

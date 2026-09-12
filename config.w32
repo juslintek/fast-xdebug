@@ -1,10 +1,10 @@
 // $Id$
 // vim:ft=javascript
 
-ARG_ENABLE("fast-xdebug", "Enable fast-xdebug coverage engine", "no");
+ARG_ENABLE("swiftcov", "Enable the swiftcov coverage engine", "no");
 
-if (PHP_FAST_XDEBUG != "no") {
-	AC_DEFINE("HAVE_FAST_XDEBUG", 1, "Have fast-xdebug support");
-	EXTENSION("fast_xdebug", "fast_xdebug.c", null, "/Dfast_xdebug_EXPORTS");
-	ADD_SOURCES(configure_module_dirname + "/src", "analysis.c coverage.c profiler.c debugger.c", "fast_xdebug");
+if (PHP_SWIFTCOV != "no") {
+	AC_DEFINE("HAVE_SWIFTCOV", 1, "Have swiftcov support");
+	EXTENSION("swiftcov", "swiftcov.c", null, "/Dswiftcov_EXPORTS");
+	ADD_SOURCES(configure_module_dirname + "/src", "analysis.c coverage.c profiler.c debugger.c", "swiftcov");
 }

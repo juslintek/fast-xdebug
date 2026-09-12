@@ -1,6 +1,6 @@
 /*
    +----------------------------------------------------------------------+
-   | fast-xdebug: coverage engine internal contract                       |
+   | swiftcov: coverage engine internal contract                          |
    +----------------------------------------------------------------------+
  */
 

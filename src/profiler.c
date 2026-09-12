@@ -1,6 +1,6 @@
 /*
    +----------------------------------------------------------------------+
-   | fast-xdebug: profiler subsystem                                      |
+   | swiftcov: profiler subsystem                                         |
    |                                                                      |
    | Call-tree profiler built on zend_observer fcall begin/end. On each   |
    | call we push a frame (start time, start memory, children accumulator)|
@@ -22,7 +22,7 @@
 #include "zend_observer.h"
 #include "zend_smart_str.h"
 
-#include "../php_fast_xdebug.h"
+#include "../php_swiftcov.h"
 #include "src/profiler.h"
 
 #include <time.h>
@@ -283,7 +283,7 @@ static void fxd_prof_write(void)
 	}
 
 	smart_str_appends(&buf, "version: 1\n");
-	smart_str_appends(&buf, "creator: fast-xdebug " PHP_FAST_XDEBUG_VERSION "\n");
+	smart_str_appends(&buf, "creator: swiftcov " PHP_SWIFTCOV_VERSION "\n");
 	smart_str_appends(&buf, "cmd: ");
 	smart_str_appends(&buf, sapi_module.name ? sapi_module.name : "php");
 	smart_str_appends(&buf, "\npart: 1\npositions: line\n\n");

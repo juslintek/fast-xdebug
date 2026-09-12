@@ -1,6 +1,6 @@
 /*
    +----------------------------------------------------------------------+
-   | fast-xdebug: compile-time op_array -> basic-block analysis           |
+   | swiftcov: compile-time op_array -> basic-block analysis              |
    |                                                                      |
    | Done ONCE per op_array (cached in an extension-reserved slot by the  |
    | caller). Jump semantics mirror Xdebug's xdebug_find_jumps so branch  |
@@ -14,7 +14,7 @@
 #include "zend_extensions.h"
 #include <limits.h>
 
-#include "../php_fast_xdebug.h"
+#include "../php_swiftcov.h"
 #include "coverage.h"
 
 #define FXD_JMP_NOT_SET (INT_MAX - 1)

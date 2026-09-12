@@ -1,0 +1,83 @@
+name: swiftcov coverage (reusable)
+
+# A one-line adoption workflow. A downstream repository calls it to run its
+# PHPUnit suite with swiftcov path coverage and upload the Cobertura report,
+# with no coverage-driver configuration of its own:
+#
+#   # .github/workflows/coverage.yml in the consuming repo
+#   name: Coverage
+#   on: [push, pull_request]
+#   jobs:
+#     coverage:
+#       uses: juslintek/swiftcov/.github/workflows/reusable-coverage.yml@v0.5.0
+#       with:
+#         php-version: '8.4'
+
+on:
+  workflow_call:
+    inputs:
+      php-version:
+        description: PHP version to run coverage on.
+        required: false
+        type: string
+        default: '8.4'
+      phpunit-command:
+        description: The PHPUnit invocation (relative to the repo root).
+        required: false
+        type: string
+        default: vendor/bin/phpunit
+      coverage-file:
+        description: Path the Cobertura report is written to.
+        required: false
+        type: string
+        default: cobertura.xml
+      composer-install:
+        description: Run `composer install` before the tests.
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  coverage:
+    name: swiftcov path coverage (PHP ${{ inputs.php-version }})
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout consuming repository
+        uses: actions/checkout@v4
+
+      - name: Set up swiftcov
+        uses: juslintek/swiftcov/.github/actions/setup-swiftcov@v0.5.0
+        with:
+          php-version: ${{ inputs.php-version }}
+          mode: coverage
+
+      - name: Install dependencies
+        if: inputs.composer-install
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Run PHPUnit with path coverage
+        env:
+          COVERAGE_FILE: ${{ inputs.coverage-file }}
+        run: >-
+          ${{ inputs.phpunit-command }}
+          --path-coverage
+          --coverage-cobertura="$COVERAGE_FILE"
+
+      - name: Validate the Cobertura report carries branch data
+        env:
+          COVERAGE_FILE: ${{ inputs.coverage-file }}
+        run: |
+          php -r '
+            $x = simplexml_load_file(getenv("COVERAGE_FILE"));
+            if (!$x || !isset($x["branches-valid"])) {
+              fwrite(STDERR, "cobertura report missing branch data\n");
+              exit(1);
+            }
+            echo "cobertura OK: branches-valid=", $x["branches-valid"], "\n";
+          '
+
+      - name: Upload Cobertura report
+        uses: actions/upload-artifact@v4
+        with:
+          name: swiftcov-cobertura-php${{ inputs.php-version }}
+          path: ${{ inputs.coverage-file }}

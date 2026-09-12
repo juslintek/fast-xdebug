@@ -1,0 +1,142 @@
+# GitLab CI for swiftcov — mirrors .github/workflows/ci.yml intent.
+#
+# Stages:
+#   * build-test : compile swiftcov from source on php:X.Y-cli, run the .phpt
+#                  suite + the identity smoke test, across PHP 8.2/8.3/8.4.
+#   * valgrind   : the frameless internal-call regression under valgrind
+#                  (mirrors the GitHub CI valgrind gate).
+#   * release    : ONLY on version tags — build the prebuilt .so artifacts and
+#                  a `pecl package` tarball, then publish them as a GitLab
+#                  Release via release-cli.
+#
+# NOTE: the extension registers at RUNTIME as the module "xdebug" (so
+# php-code-coverage/PHPUnit detect it) but BUILDS/PACKAGES as "swiftcov"
+# (modules/swiftcov.so, --enable-swiftcov). Everything below uses the swiftcov
+# names.
+#
+# CREDENTIALS: pushing to Packagist / PIE / PECL / a container registry needs
+# the owner's credentials supplied as protected CI/CD variables (see
+# docs/publishing.md). Those steps are intentionally NOT automated here; the
+# release stage only produces downloadable assets.
+
+stages:
+  - build-test
+  - valgrind
+  - release
+
+# Reusable build+test logic. Each concrete job sets PHP_IMAGE.
+.build-test-template:
+  stage: build-test
+  image: php:${PHP_VERSION}-cli
+  variables:
+    PHP_VERSION: "8.4"
+  before_script:
+    - apt-get update -y
+    - apt-get install -y --no-install-recommends autoconf build-essential pkg-config
+  script:
+    - phpize
+    - ./configure --enable-swiftcov --with-php-config="$(command -v php-config)"
+    - make -j"$(nproc)"
+    # identity smoke test — proves it registers as xdebug while being swiftcov
+    - |
+      php -n -d extension="$PWD/modules/swiftcov.so" -r '
+        assert(extension_loaded("xdebug"));
+        assert(version_compare(phpversion("xdebug"), "3.1", ">="));
+        assert(in_array("coverage", xdebug_info("mode"), true));
+        echo swiftcov_engine(), " OK\n";
+      '
+    # the .phpt suite
+    - php -n run-tests.php -q -p "$(command -v php)" -d extension="$PWD/modules/swiftcov.so" tests/*.phpt
+  artifacts:
+    when: always
+    paths:
+      - modules/swiftcov.so
+    expire_in: 1 week
+
+build-test:php8.2:
+  extends: .build-test-template
+  variables:
+    PHP_VERSION: "8.2"
+
+build-test:php8.3:
+  extends: .build-test-template
+  variables:
+    PHP_VERSION: "8.3"
+
+build-test:php8.4:
+  extends: .build-test-template
+  variables:
+    PHP_VERSION: "8.4"
+
+# Valgrind gate — the PHP 8.4+ frameless internal-call branch regression.
+valgrind:frameless:
+  stage: valgrind
+  image: php:8.4-cli
+  before_script:
+    - apt-get update -y
+    - apt-get install -y --no-install-recommends autoconf build-essential pkg-config valgrind
+  script:
+    - phpize
+    - ./configure --enable-swiftcov --with-php-config="$(command -v php-config)"
+    - make -j"$(nproc)"
+    - |
+      cat > /tmp/frameless.php <<'PHP'
+      <?php
+      $needle = 'x';
+      $haystack = ['a', 'b'];
+      xdebug_start_code_coverage(XDEBUG_CC_BRANCH_CHECK);
+      in_array($needle, $haystack);
+      $d = xdebug_get_code_coverage();
+      echo "survived\n";
+      PHP
+    - USE_ZEND_ALLOC=0 valgrind --error-exitcode=99 -q php -n -d extension="$PWD/modules/swiftcov.so" /tmp/frameless.php
+
+# Tag-gated release: build prebuilt .so + PECL tgz, publish as GitLab Release.
+# Pushing to package registries (Packagist/PIE/PECL) is a separate, credentialed
+# manual step — see docs/publishing.md.
+release:build-assets:
+  stage: release
+  image: php:8.4-cli
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+  before_script:
+    - apt-get update -y
+    # php-pear provides the pecl/pear tooling that the php:X.Y-cli image does
+    # not ship by default; required so `pecl package` below can run.
+    - apt-get install -y --no-install-recommends autoconf build-essential pkg-config php-pear
+  script:
+    - phpize
+    - ./configure --enable-swiftcov --with-php-config="$(command -v php-config)"
+    - make -j"$(nproc)"
+    - API=$(php -i | awk -F'=> ' '/PHP Extension =>/ {print $2; exit}')
+    - NAME="swiftcov-${CI_COMMIT_TAG}-php8.4-nts-linux-x86_64-api${API}.so"
+    - cp modules/swiftcov.so "$NAME"
+    - sha256sum "$NAME" > "$NAME.sha256"
+    # PECL source package — fail the job loudly if packaging breaks so a release
+    # never ships without the advertised swiftcov-*.tgz.
+    - pecl package package.xml
+    - git archive --format=tar.gz --prefix="swiftcov-${CI_COMMIT_TAG#v}/" -o "swiftcov-${CI_COMMIT_TAG#v}-src.tar.gz" HEAD
+  artifacts:
+    paths:
+      - "swiftcov-*.so"
+      - "swiftcov-*.so.sha256"
+      - "swiftcov-*.tgz"
+      - "swiftcov-*-src.tar.gz"
+    expire_in: never
+
+# Register the built assets as a GitLab Release entry (uses the release-cli
+# image; runs after the assets job on the same tag).
+release:publish:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  needs:
+    - job: release:build-assets
+      artifacts: true
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+  script:
+    - echo "Publishing swiftcov ${CI_COMMIT_TAG} release assets."
+  release:
+    tag_name: "$CI_COMMIT_TAG"
+    name: "swiftcov $CI_COMMIT_TAG"
+    description: "swiftcov $CI_COMMIT_TAG — prebuilt .so, PECL tarball and source archive. Registers at runtime as 'xdebug'."

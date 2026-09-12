@@ -1,0 +1,52 @@
+# swiftcov GitLab CI template - one-line adoption for downstream projects.
+#
+# Add path/branch coverage to any GitLab project by including this file and
+# extending the provided hidden job. No coverage driver to configure: swiftcov
+# is baked into the image and registers at runtime as the "xdebug" module, so
+# PHPUnit / php-code-coverage pick it up automatically.
+#
+# In the consuming project's .gitlab-ci.yml:
+#
+#   include:
+#     - project: 'juslintek/swiftcov'
+#       ref: v0.5.0
+#       file: '/ci/templates/swiftcov.gitlab-ci.yml'
+#
+#   coverage:
+#     extends: .swiftcov-coverage
+#
+# Override SWIFTCOV_PHP_VERSION / PHPUNIT_COMMAND / COBERTURA_FILE with job
+# variables if the defaults do not fit.
+
+variables:
+  # Match the tag of the published swiftcov image to your PHP version.
+  SWIFTCOV_PHP_VERSION: "8.4"
+  SWIFTCOV_IMAGE: "juslintek/swiftcov:php${SWIFTCOV_PHP_VERSION}"
+  PHPUNIT_COMMAND: "vendor/bin/phpunit"
+  COBERTURA_FILE: "cobertura.xml"
+
+.swiftcov-coverage:
+  image: "$SWIFTCOV_IMAGE"
+  variables:
+    # swiftcov keeps the xdebug.* namespace; coverage mode is the default in the
+    # image but we set it explicitly for clarity.
+    XDEBUG_MODE: "coverage"
+  before_script:
+    # composer is present in the swiftcov image's php base; install project deps.
+    - composer install --no-interaction --prefer-dist
+  script:
+    - php -v
+    # Prove swiftcov is active (registers as xdebug) before measuring.
+    - php -r 'assert(extension_loaded("xdebug")); echo swiftcov_engine(), PHP_EOL;'
+    - $PHPUNIT_COMMAND --path-coverage --coverage-cobertura=$COBERTURA_FILE
+  artifacts:
+    when: always
+    paths:
+      - "$COBERTURA_FILE"
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: "$COBERTURA_FILE"
+  # GitLab's total-coverage badge/regex reads the summary PHPUnit prints; the
+  # branch/line detail comes from the Cobertura report above.
+  coverage: '/^\s*Lines:\s*(\d+(?:\.\d+)?)%/'

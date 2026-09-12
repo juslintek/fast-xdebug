@@ -1,6 +1,6 @@
 /*
    +----------------------------------------------------------------------+
-   | fast-xdebug: step debugger (DBGp) -- boundary + scaffold             |
+   | swiftcov: step debugger (DBGp) -- boundary + scaffold                |
    |                                                                      |
    | Step debugging speaks the DBGp protocol over a socket to an IDE      |
    | (PhpStorm, VS Code). Implementing it faithfully is a large,          |

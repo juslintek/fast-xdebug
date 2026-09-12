@@ -1,6 +1,6 @@
 /*
    +----------------------------------------------------------------------+
-   | fast-xdebug: profiler subsystem (cachegrind output)                  |
+   | swiftcov: profiler subsystem (cachegrind output)                     |
    |                                                                      |
    | Produces Cachegrind-compatible profiles (the format KCachegrind,     |
    | qcachegrind, PhpStorm and Blackfire's importer read), collected via  |

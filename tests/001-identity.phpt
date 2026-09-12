@@ -23,4 +23,4 @@ bool(true)
 bool(true)
 bool(true)
 bool(true)
-fast-xdebug %s
+swiftcov %s
