@@ -1,0 +1,74 @@
+# swiftcov coverage Job — runs a project's PHPUnit suite with path coverage
+# inside a cluster, using the prebuilt swiftcov image (extension baked in, no
+# compiler, registers at runtime as "xdebug").
+#
+# The project source is expected on a mounted volume (here a PVC); swap it for
+# an initContainer git-clone, a ConfigMap, or an image that already contains the
+# code, depending on your setup.
+#
+# Validate without a cluster:
+#   kubectl apply --dry-run=client -f deploy/k8s/coverage-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: swiftcov-coverage
+  labels:
+    app.kubernetes.io/name: swiftcov
+    app.kubernetes.io/component: coverage
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: swiftcov
+        app.kubernetes.io/component: coverage
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: phpunit
+          # Match the tag to your PHP version (php8.2 / php8.3 / php8.4).
+          image: juslintek/swiftcov:php8.4
+          workingDir: /app
+          command:
+            - vendor/bin/phpunit
+          args:
+            - --path-coverage
+            - --coverage-cobertura=/app/build/cobertura.xml
+          env:
+            # coverage is the image default; set explicitly for clarity.
+            - name: XDEBUG_MODE
+              value: coverage
+          resources:
+            requests:
+              cpu: "500m"
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+          volumeMounts:
+            - name: project
+              mountPath: /app
+      volumes:
+        - name: project
+          # Replace with your source of truth: a PVC that holds the checked-out
+          # project, an emptyDir populated by an initContainer, etc.
+          persistentVolumeClaim:
+            claimName: swiftcov-project
+---
+# A minimal PVC the Job mounts at /app. Populate it (e.g. from a CI checkout
+# step or an initContainer) before running the Job. Adjust storageClassName /
+# size to your cluster.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: swiftcov-project
+  labels:
+    app.kubernetes.io/name: swiftcov
+    app.kubernetes.io/component: coverage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
