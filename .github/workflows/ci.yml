@@ -54,13 +54,19 @@ jobs:
 
           # ======================================================================
           # >>> TEMPORARY DIAGNOSTIC (remove once CI is green) <<<
+          # TODO(PR #1): DELETE THIS ENTIRE BLOCK once the load-time SIGSEGV is
+          # resolved and CI is green. Tracking: github.com/juslintek/fast-xdebug
+          # pull/1 (search this file for "TEMPORARY DIAGNOSTIC" before release).
           # Added for PR #1 to diagnose a load-time SIGSEGV that only reproduces
           # under ondrej/setup-php (opcache+JIT on) and NOT in the offline sandbox.
           # These lines print an actionable backtrace and confirm/deny the
           # opcache-JIT root-cause hypothesis. They are diagnostic-only and are
           # guarded with '|| true' so they NEVER fail this step by themselves.
-          # DELETE THIS ENTIRE BLOCK once the crash is resolved and CI is green.
           # ----------------------------------------------------------------------
+          # SMOKE is the EXACT payload of the gating smoke run above, so the gdb
+          # backtrace below traces the precise `php -n -d extension=... -r <SMOKE>`
+          # invocation that crashes -- guaranteeing the next CI run yields the
+          # real stack trace of the failing path (not a different process).
           SMOKE='
             assert(extension_loaded("xdebug"));
             assert(version_compare(phpversion("xdebug"), "3.1", ">="));
@@ -68,8 +74,20 @@ jobs:
             echo swiftcov_engine(), " OK\n";
           '
 
-          echo "::group::[DIAGNOSTIC] gdb backtrace of smoke run"
-          gdb -batch -ex run -ex 'bt full' -ex 'info registers' -ex 'thread apply all bt' \
+          # Allow core dumps so a trace is recoverable even if the live gdb run
+          # below cannot attach for some reason.
+          ulimit -c unlimited || true
+
+          echo "::group::[DIAGNOSTIC] gdb backtrace of the EXACT gating smoke run"
+          # Run under gdb; try the rich trace first, then fall back to a plain
+          # 'bt' so we still capture a stack even if 'bt full' is unavailable.
+          gdb -batch \
+            -ex 'set pagination off' \
+            -ex run \
+            -ex 'bt full' \
+            -ex 'bt' \
+            -ex 'info registers' \
+            -ex 'thread apply all bt' \
             --args php -n -d extension="$PWD/modules/swiftcov.so" -r "$SMOKE" || true
           echo "::endgroup::"
 

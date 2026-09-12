@@ -617,15 +617,24 @@ static void php_swiftcov_globals_ctor(zend_swiftcov_globals *g)
  * Force OPcache's JIT off before we install our user opcode handlers.
  *
  * swiftcov installs a zend user_opcode_handler on ~every opcode type (see
- * src/coverage.c fxd_install_handlers). JIT-compiled traces bypass and
- * conflict with user opcode handlers and corrupt VM state, which crashes the
- * process at load time on any PHP that ships opcache + JIT enabled (e.g.
- * ondrej/setup-php). Both real Xdebug and pcov force JIT off whenever they
- * install opcode hooks for exactly this reason; swiftcov must do the same.
+ * src/coverage.c fxd_install_handlers). JIT-compiled traces can bypass and
+ * conflict with user opcode handlers and corrupt VM state on any PHP that
+ * ships opcache + JIT enabled. Both real Xdebug and pcov force JIT off whenever
+ * they install opcode hooks for exactly this reason; swiftcov does the same.
  *
- * Best-effort: opcache may register/lock its INI after our MINIT, so the alter
- * call is not guaranteed to win -- the NULL-hardening in fxd_opcode_handler is
- * the primary crash-safety guarantee. We only touch anything when opcache is
+ * DEFENSE-IN-DEPTH, NOT A PROVEN FIX. This is hardening, deliberately kept for
+ * the opcache+JIT case a real user would hit, but it is NOT confirmed to be the
+ * cause of PR #1's load-time SIGSEGV, for two reasons:
+ *   1. The failing CI runs load the extension with `php -n`, which ignores all
+ *      ini and therefore loads no opcache/JIT at all -- so this path cannot be
+ *      what crashes those specific processes, and the guard below early-returns
+ *      in them (no "zend opcache" module registered).
+ *   2. Even when opcache IS a zend_extension, it can register/lock its INI
+ *      after our MINIT, so this alter can lose the startup race (observed on
+ *      mise: opcache.jit still reads "tracing" after load). It is best-effort.
+ * The primary crash-safety guarantee is the NULL-hardening in fxd_opcode_handler;
+ * the true root cause of the CI segfault is being captured by the temporary gdb
+ * diagnostic in .github/workflows/ci.yml. We only touch anything when opcache is
  * actually present (same "zend opcache" module-registry probe already used in
  * fxd_build_recommended_settings).
  */

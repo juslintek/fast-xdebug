@@ -344,6 +344,13 @@ static int fxd_opcode_handler(zend_execute_data *execute_data)
 	 * is no frame or no opline, there is nothing to attribute -- just dispatch
 	 * to the VM so execution proceeds safely. */
 	if (!execute_data || !execute_data->opline) {
+		/* Known, deliberate asymmetry with the normal path below: fxd_prev_handler
+		 * is keyed by opcode, and here the opcode is unreadable (no opline), so we
+		 * cannot look up or invoke a previously-chained handler for this one
+		 * dispatch. Any handler another extension chained ahead of us is therefore
+		 * skipped in this pathological edge case. Dispatching straight to the VM is
+		 * the only safe choice; this state should be near-zero in practice (it is
+		 * exactly the corrupt-frame condition this guard exists to survive). */
 		return ZEND_USER_OPCODE_DISPATCH;
 	}
 
