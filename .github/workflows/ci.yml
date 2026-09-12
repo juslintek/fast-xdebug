@@ -112,7 +112,7 @@ jobs:
         run: |
           cd tests/integration
           composer install --no-interaction
-          php -n -d extension="$GITHUB_WORKSPACE/modules/swiftcov.so" -d memory_limit=512M \
+          php -d extension="$GITHUB_WORKSPACE/modules/swiftcov.so" -d memory_limit=512M \
             ./vendor/bin/phpunit --path-coverage --coverage-cobertura=cobertura.xml
           # assert the report is well-formed and carries branch data
           php -r '$x=simplexml_load_file("cobertura.xml"); if(!$x||!isset($x["branches-valid"])){fwrite(STDERR,"bad cobertura\n");exit(1);} echo "cobertura OK: branches-valid=",$x["branches-valid"],"\n";'
