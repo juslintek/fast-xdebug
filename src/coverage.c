@@ -19,6 +19,7 @@
  */
 
 #include "php.h"
+#include "SAPI.h"
 #include "zend_compile.h"
 #include "zend_execute.h"
 #include "zend_extensions.h"
@@ -429,53 +430,83 @@ static int fxd_opcode_handler(zend_execute_data *execute_data)
  * We therefore NEVER write into an op_array that could be SHM-backed; the
  * check lives in fxd_op_array_shm_unsafe() and covers BOTH (a) ZEND_ACC_IMMUTABLE
  * functions/methods/classes (how pcov guards) and (b) the top-level {main}
- * op_array whenever OPcache is loaded, because a cached {main}'s opcodes can be
- * served from SHM WITHOUT the IMMUTABLE flag (verified locally: with only the
- * IMMUTABLE guard, writing {main}'s oplines still SIGSEGVs under protect_memory).
+ * op_array ONLY WHEN OPcache SHM caching is actually ACTIVE for this SAPI,
+ * because a cached {main}'s opcodes can be served from SHM WITHOUT the IMMUTABLE
+ * flag (verified locally: with only the IMMUTABLE guard, writing {main}'s oplines
+ * still SIGSEGVs under protect_memory when SHM caching is on).
  *
- * TRADEOFF (documented, deliberate): code whose op_array is SHM-backed keeps its
- * plain, baked-in opline handlers -- it does not route through swiftcov's
- * dispatcher -- so its coverage is not recorded while co-loaded with OPcache.
- * This is the price of never writing to SHM. Registering the hook at MINIT (so
- * OPcache would bake our dispatcher in) is NOT an option: it is exactly the
- * permanent global hook whose co-load with OPcache produced the original CI
- * SIGSEGV (also reproduced locally at exit 139). The CI gate is unaffected: each
- * run-tests.php FILE/SKIPIF child runs its script ONCE in a fresh process, so
- * {main} is freshly compiled (heap, writable) when start() runs and is covered
- * normally; a script is only served from SHM on a SUBSEQUENT run. Users who need
- * full coverage under co-loaded OPcache disable OPcache for the coverage run
- * (the standard practice for pcov/Xdebug too). Crash-freedom is the hard
- * requirement; missing coverage for SHM-cached code is a graceful degradation. */
-/* Cached "is Zend OPcache loaded in this process?" answer. OPcache presence is
- * fixed for the process lifetime, so we resolve it once. When OPcache is
- * loaded, the top-level script op_array ({main}) may have its opcodes served
- * from the read-only/shared SHM segment even though it is NOT flagged
- * ZEND_ACC_IMMUTABLE (only named functions/methods/classes get that flag), so
- * we must not write into it either. See fxd_op_array_shm_unsafe(). */
-static int fxd_opcache_loaded = -1; /* -1 = unresolved, 0 = no, 1 = yes */
+ * IMPORTANT: OPcache being merely LOADED is NOT the same as OPcache CACHING this
+ * process's {main} into SHM. Under opcache.enable_cli=0 (the shivammathur/setup-php
+ * CLI default that CI runs under), OPcache is loaded but does not cache CLI
+ * scripts, so {main} is freshly compiled on the WRITABLE HEAP on every run and is
+ * perfectly safe to patch. We therefore treat {main} as SHM-unsafe only when
+ * OPcache is enabled for the current SAPI (opcache.enable, plus opcache.enable_cli
+ * when the SAPI is cli). See fxd_opcache_shm_active().
+ *
+ * TRADEOFF (documented, deliberate): when SHM caching IS active (e.g. enable_cli=1),
+ * code whose op_array was already OPcache-cached before start() keeps its plain,
+ * baked-in opline handlers -- it does not route through swiftcov's dispatcher --
+ * so its coverage is not recorded while co-loaded with active OPcache. This is
+ * the price of never writing to SHM. Registering the hook at MINIT (so OPcache
+ * would bake our dispatcher in) is NOT an option: it is exactly the permanent
+ * global hook whose co-load with OPcache produced the original CI SIGSEGV (also
+ * reproduced locally at exit 139). Users who need full coverage under co-loaded
+ * active OPcache disable OPcache for the coverage run (the standard practice for
+ * pcov/Xdebug too). Crash-freedom is the hard requirement; missing coverage for
+ * SHM-cached code is a graceful degradation. */
+/* Cached "is Zend OPcache SHM caching active for this SAPI?" answer. Both
+ * OPcache presence and its enable/enable_cli INI settings are fixed for the
+ * process lifetime, so we resolve this once. When OPcache is actively caching,
+ * the top-level script op_array ({main}) may have its opcodes served from the
+ * read-only/shared SHM segment even though it is NOT flagged ZEND_ACC_IMMUTABLE
+ * (only named functions/methods/classes get that flag), so we must not write
+ * into it either. See fxd_op_array_shm_unsafe().
+ *
+ * opcache.enable and opcache.enable_cli are ordinary INI entries readable via
+ * the standard Zend INI API (zend_ini_long) -- no opcache-internal/private
+ * symbols are linked. */
+static int fxd_opcache_active = -1; /* -1 = unresolved, 0 = no, 1 = yes */
 
-static zend_bool fxd_opcache_is_loaded(void)
+static zend_bool fxd_opcache_shm_active(void)
 {
-	if (fxd_opcache_loaded < 0) {
-		fxd_opcache_loaded = zend_get_extension("Zend OPcache") ? 1 : 0;
+	if (fxd_opcache_active < 0) {
+		fxd_opcache_active = 0;
+		if (zend_get_extension("Zend OPcache")) {
+			/* OPcache is loaded; it only SHM-caches when enabled for this SAPI.
+			 * opcache.enable gates all SAPIs; CLI additionally requires
+			 * opcache.enable_cli (default 0 under shivammathur/setup-php). */
+			zend_long enable = zend_ini_long((char *)"opcache.enable", sizeof("opcache.enable") - 1, 0);
+			if (enable) {
+				const char *sapi = sapi_module.name ? sapi_module.name : "";
+				if (strcmp(sapi, "cli") == 0) {
+					zend_long enable_cli = zend_ini_long((char *)"opcache.enable_cli", sizeof("opcache.enable_cli") - 1, 0);
+					fxd_opcache_active = enable_cli ? 1 : 0;
+				} else {
+					fxd_opcache_active = 1;
+				}
+			}
+		}
 	}
-	return fxd_opcache_loaded != 0;
+	return fxd_opcache_active != 0;
 }
 
 /* Return non-zero when writing into op_array->opcodes could touch OPcache's
  * shared/read-only SHM. Two cases:
  *   - ZEND_ACC_IMMUTABLE: named functions/methods/classes that OPcache cached
  *     in SHM (pcov guards exactly this way);
- *   - the top-level {main} script when OPcache is loaded: its opcodes can be
- *     served straight from SHM without the IMMUTABLE flag, and there is no
- *     portable, opcache-symbol-free way to prove otherwise, so we treat it as
- *     unsafe whenever OPcache is present. */
+ *   - the top-level {main} script when OPcache SHM caching is ACTIVE for this
+ *     SAPI: its opcodes can be served straight from SHM without the IMMUTABLE
+ *     flag, and there is no portable, opcache-symbol-free way to prove otherwise,
+ *     so we conservatively treat it as unsafe. When OPcache is loaded but NOT
+ *     enabled for this SAPI (e.g. opcache.enable_cli=0 under CLI), {main} is
+ *     freshly compiled on the writable heap and IS patched, so its coverage is
+ *     recorded normally. */
 static zend_bool fxd_op_array_shm_unsafe(const zend_op_array *op_array)
 {
 	if (op_array->fn_flags & ZEND_ACC_IMMUTABLE) {
 		return 1;
 	}
-	if (op_array->function_name == NULL && fxd_opcache_is_loaded()) {
+	if (op_array->function_name == NULL && fxd_opcache_shm_active()) {
 		return 1;
 	}
 	return 0;
