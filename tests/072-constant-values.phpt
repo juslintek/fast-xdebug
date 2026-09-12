@@ -1,7 +1,7 @@
 --TEST--
 XDEBUG_CC_* / XDEBUG_FILTER_* / XDEBUG_PATH_* have Xdebug's exact numeric values
 --SKIPIF--
-<?php if (!extension_loaded('xdebug') || !function_exists('fast_xdebug_engine')) echo 'skip fast-xdebug not loaded'; ?>
+<?php if (!extension_loaded('xdebug') || !function_exists('swiftcov_engine')) echo 'skip swiftcov not loaded'; ?>
 --DESCRIPTION--
 php-code-coverage's XdebugDriver passes XDEBUG_CC_UNUSED|XDEBUG_CC_DEAD_CODE
 (and, for path coverage, |XDEBUG_CC_BRANCH_CHECK) as the bitmask to

@@ -1,7 +1,7 @@
 --TEST--
 Reproduces the exact runtime probes sebastian/environment + php-code-coverage make
 --SKIPIF--
-<?php if (!extension_loaded('xdebug') || !function_exists('fast_xdebug_engine')) echo 'skip fast-xdebug not loaded'; ?>
+<?php if (!extension_loaded('xdebug') || !function_exists('swiftcov_engine')) echo 'skip swiftcov not loaded'; ?>
 --FILE--
 <?php
 // --- sebastian/environment Runtime ------------------------------------------

@@ -1,7 +1,7 @@
 --TEST--
 Branch data has the fields php-code-coverage's Cobertura writer consumes
 --SKIPIF--
-<?php if (!extension_loaded('xdebug') || !function_exists('fast_xdebug_engine')) echo 'skip fast-xdebug not loaded'; ?>
+<?php if (!extension_loaded('xdebug') || !function_exists('swiftcov_engine')) echo 'skip swiftcov not loaded'; ?>
 --DESCRIPTION--
 php-code-coverage builds RawCodeCoverageData::fromXdebugWithPathCoverage() from
 xdebug_get_code_coverage(...|XDEBUG_CC_BRANCH_CHECK), then its Cobertura report

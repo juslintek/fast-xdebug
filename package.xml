@@ -98,6 +98,6 @@ implemented. PHP 8.2-8.5.
  <extsrcrelease>
   <configureoption name="enable-swiftcov"
                    prompt="Enable the swiftcov coverage engine"
-                   default="yes"/>
+                   default="no"/>
  </extsrcrelease>
 </package>

@@ -19,6 +19,15 @@ is therefore performed by hand, outside CI (or with protected CI variables).
 - Green pipeline on `main` (GitHub Actions + GitLab CI): `.phpt` suite, valgrind
   gate, and the PHPUnit `--path-coverage` integration harness.
 
+> **Sandbox vs CI.** The Docker image build, the PHPUnit `--path-coverage`
+> integration harness (`tests/integration/`), a real `pecl install` from the
+> tarball, and the valgrind leak gate all require network access (pulling base
+> images / Composer packages) or tooling that is not present in the offline
+> development sandbox, so they are **not** run there. They run on the networked
+> CI runners: the `.phpt` suite, valgrind gate, and integration matrix on every
+> push / PR, and the Docker image + tarball jobs on a `v*` tag. The drop-in
+> compatibility and leak-freeness claims rest on those CI gates.
+
 ## 1. Tag a release — *automated in CI*
 
 ```sh
@@ -106,6 +115,42 @@ is feasible. It is a manual, reviewed process:
    GitHub/GitLab releases cover the interim.
 
 *Requires: PECL account + manual review. Network: yes. Not run in CI.*
+
+### Expected `pecl install` behaviour with the two-identity design
+
+`package.xml` declares `<providesextension>swiftcov</providesextension>`, but the
+built module registers its `zend_module_entry` name as the literal `xdebug` (this
+is deliberate — it is what makes `extension_loaded('xdebug')` true so
+php-code-coverage / PHPUnit detect it). PECL derives the *installed* extension
+name from the loaded module entry, so its post-install "provides" check compares
+the promised name (`swiftcov`) against the runtime name (`xdebug`) and they do
+not match. Concretely, expect this at the end of an otherwise-successful install:
+
+```text
+install ok: channel://pecl.php.net/swiftcov-X.Y.Z
+Warning: channel://pecl.php.net/swiftcov-X.Y.Z: this package does not provide
+extension "swiftcov" (it provides "xdebug")
+```
+
+This is expected and harmless: `swiftcov.so` is compiled and copied to the
+extension directory correctly, and once enabled (`extension=swiftcov.so`) the
+module loads and answers to `xdebug` as intended. The message is a naming
+notice, not a build or install failure — verify the install by loading the
+extension and checking `php -d extension=swiftcov.so -r "var_dump(extension_loaded('xdebug'), swiftcov_engine());"`
+rather than by PECL's provides check.
+
+We keep `<providesextension>swiftcov</providesextension>` (rather than switching
+it to `xdebug`) on purpose: declaring `xdebug` would silence the warning but
+reintroduce the exact `xdebug`-in-package-metadata collision the rename set out
+to avoid. Documenting the expected notice is the more defensible trade-off. On
+strict PECL versions that treat the mismatch as an error rather than a warning,
+install the `.so` from the tag-built release assets (GitHub/GitLab) or via the
+Docker image instead.
+
+> This concrete behaviour was documented from PECL's known post-install
+> provides-check semantics; it cannot be exercised from the offline development
+> sandbox (see below). A real `pecl install` from the built tarball runs as part
+> of the release verification on a networked host / CI runner.
 
 ## Automated vs manual — summary
 
