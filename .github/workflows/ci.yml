@@ -43,12 +43,57 @@ jobs:
 
       - name: Load smoke test (registers as xdebug)
         run: |
+          # Primary, GATING smoke run: a real failure here must fail the job.
+          # Do NOT add '|| true' to this invocation.
           php -n -d extension="$PWD/modules/swiftcov.so" -r '
             assert(extension_loaded("xdebug"));
             assert(version_compare(phpversion("xdebug"), "3.1", ">="));
             assert(in_array("coverage", xdebug_info("mode"), true));
             echo swiftcov_engine(), " OK\n";
           '
+
+          # ======================================================================
+          # >>> TEMPORARY DIAGNOSTIC (remove once CI is green) <<<
+          # Added for PR #1 to diagnose a load-time SIGSEGV that only reproduces
+          # under ondrej/setup-php (opcache+JIT on) and NOT in the offline sandbox.
+          # These lines print an actionable backtrace and confirm/deny the
+          # opcache-JIT root-cause hypothesis. They are diagnostic-only and are
+          # guarded with '|| true' so they NEVER fail this step by themselves.
+          # DELETE THIS ENTIRE BLOCK once the crash is resolved and CI is green.
+          # ----------------------------------------------------------------------
+          SMOKE='
+            assert(extension_loaded("xdebug"));
+            assert(version_compare(phpversion("xdebug"), "3.1", ">="));
+            assert(in_array("coverage", xdebug_info("mode"), true));
+            echo swiftcov_engine(), " OK\n";
+          '
+
+          echo "::group::[DIAGNOSTIC] gdb backtrace of smoke run"
+          gdb -batch -ex run -ex 'bt full' -ex 'info registers' -ex 'thread apply all bt' \
+            --args php -n -d extension="$PWD/modules/swiftcov.so" -r "$SMOKE" || true
+          echo "::endgroup::"
+
+          # JIT-hypothesis control runs. Locate opcache.so gracefully (may be absent).
+          OPCACHE_SO="$(php -n -r 'foreach (explode(PATH_SEPARATOR, ini_get("extension_dir") ?: "") as $d) { $p = $d . "/opcache.so"; if (is_file($p)) { echo $p; break; } }' 2>/dev/null || true)"
+
+          echo "::group::[DIAGNOSTIC] smoke run with opcache + JIT explicitly ON (JIT-on path)"
+          if [ -n "$OPCACHE_SO" ]; then
+            php -n -d extension="$PWD/modules/swiftcov.so" \
+              -d zend_extension="$OPCACHE_SO" \
+              -d opcache.enable_cli=1 -d opcache.jit_buffer_size=64M -d opcache.jit=tracing \
+              -r "$SMOKE" || true
+          else
+            echo "[DIAGNOSTIC] opcache.so not found in extension_dir; skipping JIT-on control." || true
+          fi
+          echo "::endgroup::"
+
+          echo "::group::[DIAGNOSTIC] smoke run with opcache explicitly OFF (JIT-off path)"
+          php -n -d extension="$PWD/modules/swiftcov.so" \
+            -d opcache.enable_cli=0 \
+            -r "$SMOKE" || true
+          echo "::endgroup::"
+          # >>> END TEMPORARY DIAGNOSTIC <<<
+          # ======================================================================
 
       - name: .phpt test suite
         run: |
