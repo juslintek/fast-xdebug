@@ -60,19 +60,31 @@ jobs:
           php -n run-tests.php -q -p "$(command -v php)" \
             -d extension="$PWD/modules/swiftcov.so" tests/*.phpt
 
-          # TEMPORARY FALLBACK (PR #1): remove once CI is confirmed green.
-          # Diagnostic-only. If the gating run above went red, re-run the SAME
-          # command under gdb purely to surface the .phpt child stack trace.
-          # Guarded with '|| true' so it can NEVER change this step's pass/fail
-          # outcome; the gating run-tests result above is the sole gate.
+          # TEMPORARY DIAGNOSTIC — TODO(PR #1): remove this whole block once CI
+          # is confirmed green. Diagnostic-only; every line is guarded with
+          # '|| true' so it can NEVER change this step's pass/fail outcome. The
+          # gating run-tests.php result above remains the SOLE gate.
+          #
+          # The run-tests.php PARENT does not crash, so tracing it yields no
+          # useful backtrace. Instead we trace the ACTUAL crashing child config
+          # directly: the system OPcache co-loaded with swiftcov, no `-n`. We
+          # also run two controls to isolate the interaction.
+          OPC="$(php-config --extension-dir)/opcache.so"
+          # Control 1: opcache alone (no swiftcov) must be fine.
+          php -d zend_extension="$OPC" -d opcache.enable_cli=1 \
+            -r 'echo "opcache-only OK\n";' || true
+          # Crashing config UNDER gdb: opcache + swiftcov, no `-n`.
           gdb -batch \
             -ex 'set pagination off' \
             -ex run \
             -ex 'bt full' \
-            -ex 'bt' \
             -ex 'thread apply all bt' \
-            --args php -n run-tests.php -q -p "$(command -v php)" \
-            -d extension="$PWD/modules/swiftcov.so" tests/*.phpt || true
+            --args php -d zend_extension="$OPC" -d opcache.enable_cli=1 \
+            -d extension="$PWD/modules/swiftcov.so" \
+            -r 'var_dump(extension_loaded("xdebug"));' || true
+          # Control 2: swiftcov alone (no opcache, `-n`) must survive.
+          php -n -d extension="$PWD/modules/swiftcov.so" \
+            -r 'var_dump(extension_loaded("xdebug"));' || true
 
       - name: Valgrind — frameless internal-call regression
         run: |

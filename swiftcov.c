@@ -613,53 +613,6 @@ static void php_swiftcov_globals_ctor(zend_swiftcov_globals *g)
 	g->memory_guard = 1;
 }
 
-/*
- * Force OPcache's JIT off before we install our user opcode handlers.
- *
- * swiftcov installs a zend user_opcode_handler on ~every opcode type (see
- * src/coverage.c fxd_install_handlers). JIT-compiled traces can bypass and
- * conflict with user opcode handlers and corrupt VM state on any PHP that
- * ships opcache + JIT enabled. Both real Xdebug and pcov force JIT off whenever
- * they install opcode hooks for exactly this reason; swiftcov does the same.
- *
- * DEFENSE-IN-DEPTH, NOT A PROVEN FIX. This is hardening, deliberately kept for
- * the opcache+JIT case a real user would hit, but it is NOT confirmed to be the
- * cause of PR #1's load-time SIGSEGV, for two reasons:
- *   1. The failing CI runs load the extension with `php -n`, which ignores all
- *      ini and therefore loads no opcache/JIT at all -- so this path cannot be
- *      what crashes those specific processes, and the guard below early-returns
- *      in them (no "zend opcache" module registered).
- *   2. Even when opcache IS a zend_extension, it can register/lock its INI
- *      after our MINIT, so this alter can lose the startup race (observed on
- *      mise: opcache.jit still reads "tracing" after load). It is best-effort.
- * The primary crash-safety guarantee is the NULL-hardening in fxd_opcode_handler;
- * the true root cause of the CI segfault is being captured by the temporary gdb
- * diagnostic in .github/workflows/ci.yml. We only touch anything when opcache is
- * actually present (same "zend opcache" module-registry probe already used in
- * fxd_build_recommended_settings).
- */
-static void fxd_disable_jit_if_present(void)
-{
-	zend_string *name;
-
-	if (!zend_hash_str_exists(&module_registry, "zend opcache",
-	                          sizeof("zend opcache") - 1)) {
-		return;
-	}
-
-	name = zend_string_init("opcache.jit", sizeof("opcache.jit") - 1, 0);
-	(void) zend_alter_ini_entry_chars(name, "disable", sizeof("disable") - 1,
-		ZEND_INI_SYSTEM, ZEND_INI_STAGE_STARTUP);
-	zend_string_release(name);
-
-	/* Defensively zero the JIT buffer too, so no JIT machinery is armed. */
-	name = zend_string_init("opcache.jit_buffer_size",
-	                        sizeof("opcache.jit_buffer_size") - 1, 0);
-	(void) zend_alter_ini_entry_chars(name, "0", sizeof("0") - 1,
-		ZEND_INI_SYSTEM, ZEND_INI_STAGE_STARTUP);
-	zend_string_release(name);
-}
-
 PHP_MINIT_FUNCTION(swiftcov)
 {
 	REGISTER_INI_ENTRIES();
@@ -678,9 +631,9 @@ PHP_MINIT_FUNCTION(swiftcov)
 	REGISTER_LONG_CONSTANT("XDEBUG_TRACE_HTML",         4, CONST_CS | CONST_PERSISTENT);
 	REGISTER_LONG_CONSTANT("XDEBUG_TRACE_NAKED_FILENAME", 8, CONST_CS | CONST_PERSISTENT);
 
-	/* Disable OPcache JIT BEFORE installing any user opcode handlers below, so
-	 * JIT is off before zend_set_user_opcode_handler runs (matches Xdebug/pcov). */
-	fxd_disable_jit_if_present();
+	/* No MINIT JIT hook: PHP auto-disables JIT once user opcode handlers are
+	 * installed (lazily, in fxd_coverage_start), and touching opcache INI during
+	 * MINIT while OPcache initialises was implicated in the PR #1 co-load SIGSEGV. */
 
 	fxd_coverage_minit();
 	fxd_profiler_minit();

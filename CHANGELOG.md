@@ -39,10 +39,14 @@ php-code-coverage / PHPUnit / Cachegrind tooling consume.
 - **Load-time crash-safety hardening.** The per-opcode handler
   (`fxd_opcode_handler`) now NULL-guards `execute_data`/`opline` before
   dereferencing, so an unexpected VM state (e.g. an opcache/JIT edge case)
-  dispatches safely to the engine instead of segfaulting. As defense-in-depth
-  matching Xdebug/pcov, OPcache JIT is force-disabled at `MINIT` (best-effort,
-  only when OPcache is loaded) before the user opcode handlers are installed,
-  since JIT-compiled traces can bypass and conflict with them.
+  dispatches safely to the engine instead of segfaulting. User opcode handlers
+  are installed lazily (only around an active coverage session), and op_arrays
+  backed by OPcache shared memory are skipped when toggling those hooks under a
+  co-loaded OPcache. The previous best-effort `MINIT` OPcache-JIT force-disable
+  hook was **removed**: PHP already auto-disables JIT once user opcode handlers
+  are installed (making the hook redundant), and altering opcache INI during
+  `MINIT` while OPcache initialises was implicated in the co-loaded-OPcache
+  load-time SIGSEGV under investigation on PR #1.
 - **Infrastructure adoption tooling and roadmap.** `docs/adoption-roadmap.md`
   lays out the compatibility-first rollout, risk controls, phased distribution
   plan, the long-term first-class php-code-coverage driver end-state, and
