@@ -1,9 +1,10 @@
 #!/usr/bin/env sh
-# fast-xdebug — headache-free source install.
+# swiftcov — headache-free source install.
 #
 # Detects php-config, builds the extension, installs the .so into PHP's
 # extension_dir, and tells you the exact line to add to php.ini (or appends it
 # for you with --enable-ini). Works on any PHP 8.2–8.5 with dev headers.
+# swiftcov registers at runtime as 'xdebug' so existing tools detect it.
 #
 # Usage:
 #   ./install.sh                 # build + install, print the ini line
@@ -17,9 +18,9 @@ CONFIGURE_EXTRA=""
 for arg in "$@"; do
   case "$arg" in
     --enable-ini) ENABLE_INI=1 ;;
-    --native)     CONFIGURE_EXTRA="$CONFIGURE_EXTRA --enable-fast-xdebug-native" ;;
+    --native)     CONFIGURE_EXTRA="$CONFIGURE_EXTRA --enable-swiftcov-native" ;;
     -h|--help)
-      sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) echo "unknown option: $arg" >&2; exit 2 ;;
   esac
@@ -42,31 +43,31 @@ fi
 
 PHP_VERSION="$("$PHP_CONFIG" --version)"
 EXT_DIR="$("$PHP_CONFIG" --extension-dir)"
-echo ">> Building fast-xdebug for PHP $PHP_VERSION"
+echo ">> Building swiftcov for PHP $PHP_VERSION"
 echo ">> extension_dir: $EXT_DIR"
 
 # 2. Build.
 "$PHPIZE" >/dev/null
 # shellcheck disable=SC2086
-./configure --enable-fast-xdebug $CONFIGURE_EXTRA --with-php-config="$PHP_CONFIG" >/dev/null
+./configure --enable-swiftcov $CONFIGURE_EXTRA --with-php-config="$PHP_CONFIG" >/dev/null
 make -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
 
 # 3. Install.
 make install >/dev/null 2>&1 || {
   # make install may need root; fall back to a manual copy.
-  cp modules/fast_xdebug.so "$EXT_DIR/" 2>/dev/null || {
-    echo "error: could not copy fast_xdebug.so to $EXT_DIR (try sudo)" >&2
+  cp modules/swiftcov.so "$EXT_DIR/" 2>/dev/null || {
+    echo "error: could not copy swiftcov.so to $EXT_DIR (try sudo)" >&2
     exit 1
   }
 }
-echo ">> Installed fast_xdebug.so to $EXT_DIR"
+echo ">> Installed swiftcov.so to $EXT_DIR"
 
 # 4. Wire up php.ini.
-INI_LINE="extension=fast_xdebug.so"
+INI_LINE="extension=swiftcov.so"
 INI_FILE="$(php --ini 2>/dev/null | awk -F': ' '/Loaded Configuration File/ {print $2}')"
 if [ "$ENABLE_INI" = "1" ] && [ -n "$INI_FILE" ] && [ "$INI_FILE" != "(none)" ]; then
-  if grep -q "fast_xdebug.so" "$INI_FILE" 2>/dev/null; then
-    echo ">> $INI_FILE already loads fast_xdebug.so"
+  if grep -q "swiftcov.so" "$INI_FILE" 2>/dev/null; then
+    echo ">> $INI_FILE already loads swiftcov.so"
   else
     printf '\n%s\n' "$INI_LINE" >> "$INI_FILE"
     echo ">> Added '$INI_LINE' to $INI_FILE"
@@ -79,5 +80,5 @@ else
 fi
 
 echo ""
-echo ">> Verify:  php -m | grep -i xdebug   (fast-xdebug registers as 'xdebug')"
+echo ">> Verify:  php -m | grep -i xdebug   (swiftcov registers as 'xdebug')"
 echo ">> It defaults to coverage mode; set xdebug.mode=auto for heuristic detection."

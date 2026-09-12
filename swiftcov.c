@@ -1,6 +1,6 @@
 /*
    +----------------------------------------------------------------------+
-   | fast-xdebug: an Xdebug-API-compatible, block-based code coverage      |
+   | swiftcov: an Xdebug-API-compatible, block-based code coverage         |
    | engine for PHP 8.2 - 8.5.                                             |
    |                                                                      |
    | Registers under the module name "xdebug" and exposes the subset of   |
@@ -30,12 +30,12 @@
 #include <unistd.h>
 #endif
 
-#include "php_fast_xdebug.h"
+#include "php_swiftcov.h"
 #include "src/coverage.h"
 #include "src/profiler.h"
 #include "src/debugger.h"
 
-ZEND_DECLARE_MODULE_GLOBALS(fast_xdebug)
+ZEND_DECLARE_MODULE_GLOBALS(swiftcov)
 
 /* INI: xdebug.mode (we honour "coverage"/"off"), so xdebug_info('mode') works.
  * Registered as a plain (non-global-bound) entry; read via INI_STR at runtime. */
@@ -347,7 +347,7 @@ PHP_FUNCTION(xdebug_info)
 			add_next_index_string(&mode, "debug");
 		}
 		add_assoc_zval(return_value, "mode", &mode);
-		add_assoc_string(return_value, "engine", "fast-xdebug");
+		add_assoc_string(return_value, "engine", "swiftcov (fast-xdebug)");
 		add_assoc_string(return_value, "version", (char *) FXD_XDEBUG_COMPAT_VERSION);
 	}
 }
@@ -403,7 +403,6 @@ PHP_FUNCTION(xdebug_get_tracefile_name)
 	RETURN_FALSE;
 }
 
-/* fast_xdebug_engine(): string  -- lets tools distinguish us from real Xdebug. */
 /* Parse a PHP shorthand byte value ("512M", "1G", "-1") to bytes.
  * Returns -1 for unlimited. */
 static zend_long fxd_parse_bytes(const char *v)
@@ -437,21 +436,22 @@ static long fxd_cpu_count(void)
 }
 
 /*
- * fast_xdebug_recommended_settings(): array
+ * swiftcov_recommended_settings(): array
  *
  * Advisory only -- inspects the environment (memory_limit, CPU count, opcache,
  * the requested mode) and returns recommended settings plus the reasoning, so a
  * user or a bootstrap script can apply them. It does NOT change anything by
  * itself. Everything here is a heuristic and labelled as such.
+ *
+ * fast_xdebug_recommended_settings() is a documented BC alias that shares this
+ * implementation via fxd_build_recommended_settings().
  */
-PHP_FUNCTION(fast_xdebug_recommended_settings)
+static void fxd_build_recommended_settings(zval *return_value)
 {
 	zend_long mem_bytes;
 	long cpus;
 	zend_bool opcache_on;
 	zval recs, notes;
-
-	ZEND_PARSE_PARAMETERS_NONE();
 
 	mem_bytes = fxd_parse_bytes(INI_STR("memory_limit"));
 	cpus = fxd_cpu_count();
@@ -513,15 +513,47 @@ PHP_FUNCTION(fast_xdebug_recommended_settings)
 	add_assoc_zval(return_value, "notes", &notes);
 }
 
+/* swiftcov_recommended_settings(): array  -- canonical name. */
+PHP_FUNCTION(swiftcov_recommended_settings)
+{
+	ZEND_PARSE_PARAMETERS_NONE();
+	fxd_build_recommended_settings(return_value);
+}
+
+/* fast_xdebug_recommended_settings(): array  -- BC alias. */
+PHP_FUNCTION(fast_xdebug_recommended_settings)
+{
+	ZEND_PARSE_PARAMETERS_NONE();
+	fxd_build_recommended_settings(return_value);
+}
+
+/*
+ * swiftcov_engine(): string  -- canonical product sentinel. Lets tools
+ * distinguish us from real Xdebug. fast_xdebug_engine() is a BC alias.
+ */
+PHP_FUNCTION(swiftcov_engine)
+{
+	ZEND_PARSE_PARAMETERS_NONE();
+	RETURN_STRING("swiftcov " PHP_SWIFTCOV_VERSION);
+}
+
+/* fast_xdebug_engine(): string  -- BC alias for swiftcov_engine(). */
 PHP_FUNCTION(fast_xdebug_engine)
 {
 	ZEND_PARSE_PARAMETERS_NONE();
-	RETURN_STRING("fast-xdebug " PHP_FAST_XDEBUG_VERSION);
+	RETURN_STRING("swiftcov " PHP_SWIFTCOV_VERSION);
 }
 
-/* fast_xdebug_resolved_mode(): string
+/* swiftcov_resolved_mode(): string
  * Shows the effective mode after auto-detection, so users can see what
  * xdebug.mode=auto resolved to (e.g. "coverage"). */
+PHP_FUNCTION(swiftcov_resolved_mode)
+{
+	ZEND_PARSE_PARAMETERS_NONE();
+	RETURN_STRING((char *) fxd_resolve_mode());
+}
+
+/* fast_xdebug_resolved_mode(): string  -- BC alias for swiftcov_resolved_mode(). */
 PHP_FUNCTION(fast_xdebug_resolved_mode)
 {
 	ZEND_PARSE_PARAMETERS_NONE();
@@ -530,7 +562,7 @@ PHP_FUNCTION(fast_xdebug_resolved_mode)
 
 /* ---- function table ---------------------------------------------------- */
 
-static const zend_function_entry fast_xdebug_functions[] = {
+static const zend_function_entry swiftcov_functions[] = {
 	PHP_FE(xdebug_start_code_coverage,   arginfo_fxd_start)
 	PHP_FE(xdebug_stop_code_coverage,    arginfo_fxd_start)
 	PHP_FE(xdebug_get_code_coverage,     arginfo_fxd_void)
@@ -541,6 +573,11 @@ static const zend_function_entry fast_xdebug_functions[] = {
 	PHP_FE(xdebug_stop_trace,            arginfo_fxd_void)
 	PHP_FE(xdebug_get_profiler_filename, arginfo_fxd_void)
 	PHP_FE(xdebug_get_tracefile_name,    arginfo_fxd_void)
+	/* canonical swiftcov_* sentinels */
+	PHP_FE(swiftcov_engine,              arginfo_fxd_void)
+	PHP_FE(swiftcov_resolved_mode,       arginfo_fxd_void)
+	PHP_FE(swiftcov_recommended_settings, arginfo_fxd_void)
+	/* fast_xdebug_* BC aliases (kept working for anything already using them) */
 	PHP_FE(fast_xdebug_engine,           arginfo_fxd_void)
 	PHP_FE(fast_xdebug_resolved_mode,    arginfo_fxd_void)
 	PHP_FE(fast_xdebug_recommended_settings, arginfo_fxd_void)
@@ -549,7 +586,7 @@ static const zend_function_entry fast_xdebug_functions[] = {
 
 /* ---- module lifecycle -------------------------------------------------- */
 
-static void php_fast_xdebug_globals_ctor(zend_fast_xdebug_globals *g)
+static void php_swiftcov_globals_ctor(zend_swiftcov_globals *g)
 {
 	memset(g, 0, sizeof(*g));
 	/* Safe defaults before any coverage session configures them. */
@@ -558,7 +595,7 @@ static void php_fast_xdebug_globals_ctor(zend_fast_xdebug_globals *g)
 	g->memory_guard = 1;
 }
 
-PHP_MINIT_FUNCTION(fast_xdebug)
+PHP_MINIT_FUNCTION(swiftcov)
 {
 	REGISTER_INI_ENTRIES();
 
@@ -582,24 +619,24 @@ PHP_MINIT_FUNCTION(fast_xdebug)
 	return SUCCESS;
 }
 
-PHP_MSHUTDOWN_FUNCTION(fast_xdebug)
+PHP_MSHUTDOWN_FUNCTION(swiftcov)
 {
 	UNREGISTER_INI_ENTRIES();
 	return SUCCESS;
 }
 
 /* GINIT: zero the per-thread globals. */
-static PHP_GINIT_FUNCTION(fast_xdebug)
+static PHP_GINIT_FUNCTION(swiftcov)
 {
-#if defined(COMPILE_DL_FAST_XDEBUG) && defined(ZTS)
+#if defined(COMPILE_DL_SWIFTCOV) && defined(ZTS)
 	ZEND_TSRMLS_CACHE_UPDATE();
 #endif
-	php_fast_xdebug_globals_ctor(fast_xdebug_globals);
+	php_swiftcov_globals_ctor(swiftcov_globals);
 }
 
-PHP_RINIT_FUNCTION(fast_xdebug)
+PHP_RINIT_FUNCTION(swiftcov)
 {
-#if defined(ZTS) && defined(COMPILE_DL_FAST_XDEBUG)
+#if defined(ZTS) && defined(COMPILE_DL_SWIFTCOV)
 	ZEND_TSRMLS_CACHE_UPDATE();
 #endif
 	fxd_coverage_rinit();
@@ -618,7 +655,7 @@ PHP_RINIT_FUNCTION(fast_xdebug)
 	return SUCCESS;
 }
 
-PHP_RSHUTDOWN_FUNCTION(fast_xdebug)
+PHP_RSHUTDOWN_FUNCTION(swiftcov)
 {
 	fxd_coverage_rshutdown();
 	fxd_profiler_rshutdown();
@@ -626,37 +663,37 @@ PHP_RSHUTDOWN_FUNCTION(fast_xdebug)
 	return SUCCESS;
 }
 
-PHP_MINFO_FUNCTION(fast_xdebug)
+PHP_MINFO_FUNCTION(swiftcov)
 {
 	php_info_print_table_start();
-	php_info_print_table_header(2, "fast-xdebug support", "enabled");
-	php_info_print_table_row(2, "Version", PHP_FAST_XDEBUG_VERSION);
+	php_info_print_table_header(2, "swiftcov support", "enabled");
+	php_info_print_table_row(2, "Version", PHP_SWIFTCOV_VERSION);
 	php_info_print_table_row(2, "Xdebug-compatible version", FXD_XDEBUG_COMPAT_VERSION);
 	php_info_print_table_row(2, "Coverage mode active",
 		fxd_mode_has_coverage() ? "yes" : "no");
 	php_info_print_table_end();
 }
 
-zend_module_entry fast_xdebug_module_entry = {
+zend_module_entry swiftcov_module_entry = {
 	STANDARD_MODULE_HEADER,
 	"xdebug",                     /* MUST be "xdebug" so extension_loaded('xdebug') is true */
-	fast_xdebug_functions,
-	PHP_MINIT(fast_xdebug),
-	PHP_MSHUTDOWN(fast_xdebug),
-	PHP_RINIT(fast_xdebug),
-	PHP_RSHUTDOWN(fast_xdebug),
-	PHP_MINFO(fast_xdebug),
+	swiftcov_functions,
+	PHP_MINIT(swiftcov),
+	PHP_MSHUTDOWN(swiftcov),
+	PHP_RINIT(swiftcov),
+	PHP_RSHUTDOWN(swiftcov),
+	PHP_MINFO(swiftcov),
 	FXD_XDEBUG_COMPAT_VERSION,    /* phpversion('xdebug') returns this */
-	PHP_MODULE_GLOBALS(fast_xdebug),
-	PHP_GINIT(fast_xdebug),
+	PHP_MODULE_GLOBALS(swiftcov),
+	PHP_GINIT(swiftcov),
 	NULL,                         /* GSHUTDOWN */
 	NULL,                         /* post deactivate */
 	STANDARD_MODULE_PROPERTIES_EX
 };
 
-#ifdef COMPILE_DL_FAST_XDEBUG
+#ifdef COMPILE_DL_SWIFTCOV
 # ifdef ZTS
 ZEND_TSRMLS_CACHE_DEFINE()
 # endif
-ZEND_GET_MODULE(fast_xdebug)
+ZEND_GET_MODULE(swiftcov)
 #endif

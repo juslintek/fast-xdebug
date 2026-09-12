@@ -1,22 +1,22 @@
 {
-    "name": "juslintek/fast-xdebug",
-    "description": "Xdebug-API-compatible PHP code coverage (line, branch, path) with a fast block-based backend. Makes branch/path coverage nearly as cheap as line coverage.",
+    "name": "juslintek/swiftcov",
+    "description": "swiftcov: a fast, Xdebug-API-compatible PHP code coverage engine (line, branch, path) with a block-based backend. Registers at runtime as 'xdebug' so php-code-coverage/PHPUnit consume it unchanged, while making branch/path coverage nearly as cheap as line coverage.",
     "type": "php-ext",
     "license": "BSD-2-Clause",
-    "keywords": ["code-coverage", "xdebug", "pcov", "branch-coverage", "path-coverage", "phpunit", "extension"],
+    "keywords": ["swiftcov", "code-coverage", "xdebug", "pcov", "branch-coverage", "path-coverage", "phpunit", "extension"],
     "require": {
         "php": ">=8.2,<8.6"
     },
     "php-ext": {
-        "extension-name": "fast_xdebug",
+        "extension-name": "swiftcov",
         "priority": 90,
         "support-zts": true,
         "support-nts": true,
         "download-url-method": ["pre-packaged-binary", "composer-default"],
         "configure-options": [
             {
-                "name": "enable-fast-xdebug",
-                "description": "whether to enable the fast-xdebug coverage engine",
+                "name": "enable-swiftcov",
+                "description": "whether to enable the swiftcov coverage engine",
                 "needs-value": false
             }
         ]

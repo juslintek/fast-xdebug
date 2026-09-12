@@ -1,6 +1,6 @@
 /*
    +----------------------------------------------------------------------+
-   | fast-xdebug: runtime coverage recording + Xdebug-shaped collection   |
+   | swiftcov: runtime coverage recording + Xdebug-shaped collection      |
    |                                                                      |
    | Runtime model: each basic block ends in exactly one control-flow     |
    | opcode (JMP*, RETURN, MATCH/SWITCH, FE_*, CATCH, THROW, ...) OR falls |
@@ -24,7 +24,7 @@
 #include "zend_extensions.h"
 #include "zend_exceptions.h"
 
-#include "../php_fast_xdebug.h"
+#include "../php_swiftcov.h"
 #include "coverage.h"
 
 /* Per-request analysis cache: HashTable<op_array-pointer, fxd_analysis*>.

@@ -7,18 +7,20 @@
              http://pear.php.net/dtd/tasks-1.0.xsd
              http://pear.php.net/dtd/package-2.0
              http://pear.php.net/dtd/package-2.0.xsd">
- <name>fast_xdebug</name>
+ <name>swiftcov</name>
  <channel>pecl.php.net</channel>
  <summary>Fast, Xdebug-API-compatible code coverage (line, branch, path) for PHP.</summary>
  <description>
-fast-xdebug is a PHP Zend extension that provides code coverage (line, branch
-and path) through the Xdebug coverage API, so PHPUnit / php-code-coverage /
+swiftcov is a PHP Zend extension that provides code coverage (line, branch and
+path) through the Xdebug coverage API, so PHPUnit / php-code-coverage /
 Cobertura tooling consume it unchanged. It analyses each op_array into basic
 blocks once and records one byte per executed block at runtime, reconstructing
 lines/branches/paths at collection time. Branch and path coverage therefore
 cost about the same at runtime as line coverage -- roughly an order of
-magnitude faster than Xdebug for path coverage. Coverage only (no debugger,
-profiler or tracer).
+magnitude faster than Xdebug for path coverage. The extension registers at
+runtime under the module name "xdebug" for tool detection, but ships as the
+distinct product/package "swiftcov". Coverage only (no debugger, profiler or
+tracer beyond the Cachegrind profiler).
  </description>
  <lead>
   <name>Linas Jusys</name>
@@ -28,8 +30,8 @@ profiler or tracer).
  </lead>
  <date>2026-09-11</date>
  <version>
-  <release>0.4.0</release>
-  <api>0.4.0</api>
+  <release>0.5.0</release>
+  <api>0.5.0</api>
  </version>
  <stability>
   <release>alpha</release>
@@ -37,19 +39,22 @@ profiler or tracer).
  </stability>
  <license uri="https://opensource.org/licenses/BSD-2-Clause">BSD-2-Clause</license>
  <notes>
-0.4.0: easy install everywhere (PIE, PECL package, install.sh, prebuilt-binary
-release workflow); heuristic mode auto-detection (xdebug.mode=auto);
-fast_xdebug_recommended_settings() auto-tuning advice; automatic
-memory-pressure adaptation of path enumeration (memory_guard) so large suites
-never OOM. Coverage + Cachegrind profiler; step debugging still not
+0.5.0: distinct publishable product/package identity. The build/package name is
+now "swiftcov" (composer juslintek/swiftcov, PECL swiftcov, extension swiftcov)
+so PECL/PIE/Packagist accept it and trademark friction with "xdebug" in the
+package name is avoided. The RUNTIME module name still registers as "xdebug" so
+php-code-coverage/PHPUnit keep detecting it. The previous fast_xdebug_* helper
+functions are retained as documented BC aliases; new canonical swiftcov_engine()
+/ swiftcov_resolved_mode() / swiftcov_recommended_settings() are added. No change
+to coverage output. Coverage + Cachegrind profiler; step debugging still not
 implemented. PHP 8.2-8.5.
 </notes>
  <contents>
   <dir name="/">
    <file role="src" name="config.m4"/>
    <file role="src" name="config.w32"/>
-   <file role="src" name="fast_xdebug.c"/>
-   <file role="src" name="php_fast_xdebug.h"/>
+   <file role="src" name="swiftcov.c"/>
+   <file role="src" name="php_swiftcov.h"/>
    <dir name="src">
     <file role="src" name="analysis.c"/>
     <file role="src" name="coverage.c"/>
@@ -61,6 +66,7 @@ implemented. PHP 8.2-8.5.
    </dir>
    <dir name="tests">
     <file role="test" name="001-identity.phpt"/>
+    <file role="test" name="002-product-identity.phpt"/>
     <file role="test" name="010-line-coverage.phpt"/>
     <file role="test" name="011-line-coverage-main.phpt"/>
     <file role="test" name="020-branch-shape.phpt"/>
@@ -88,10 +94,10 @@ implemented. PHP 8.2-8.5.
    </pearinstaller>
   </required>
  </dependencies>
- <providesextension>fast_xdebug</providesextension>
+ <providesextension>swiftcov</providesextension>
  <extsrcrelease>
-  <configureoption name="enable-fast-xdebug"
-                   prompt="Enable the fast-xdebug coverage engine"
+  <configureoption name="enable-swiftcov"
+                   prompt="Enable the swiftcov coverage engine"
                    default="yes"/>
  </extsrcrelease>
 </package>

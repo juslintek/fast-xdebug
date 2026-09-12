@@ -1,8 +1,43 @@
 # Changelog
 
-All notable changes to fast-xdebug are documented here. Versions are alpha;
+All notable changes to swiftcov (formerly fast-xdebug) are documented here.
+Versions are alpha;
 the API surface tracks the subset of Xdebug's coverage/profiler API that
 php-code-coverage / PHPUnit / Cachegrind tooling consume.
+
+## [0.5.0] - 2026-09-11
+
+### Changed
+- **Distinct, publishable product/package identity: `swiftcov`.** The
+  build/package name is renamed from `fast_xdebug` to `swiftcov` across the
+  build system and distribution metadata: `config.m4`/`config.w32`
+  (`--enable-swiftcov`, `PHP_NEW_EXTENSION(swiftcov)`, `HAVE_SWIFTCOV`), the
+  source file (`fast_xdebug.c` -> `swiftcov.c`) and header (`php_fast_xdebug.h`
+  -> `php_swiftcov.h`, `PHP_SWIFTCOV_VERSION`), `composer.json`
+  (`juslintek/swiftcov`, `php-ext.extension-name` `swiftcov`), `package.xml`
+  (`<name>`/`<providesextension>` `swiftcov`), and `install.sh` (produces
+  `modules/swiftcov.so`). Because the package name no longer contains the word
+  "xdebug", PECL/PIE/Packagist can accept it and trademark friction is avoided.
+- The **RUNTIME identity is unchanged**: the `zend_module_entry` name is still
+  the literal string `"xdebug"`, so `extension_loaded('xdebug')`,
+  `phpversion('xdebug') >= 3.1` and `xdebug_info('mode')` all keep working for
+  php-code-coverage / PHPUnit. See `docs/decisions/0003-product-identity-vs-runtime-name.md`.
+
+### Added
+- Canonical sentinel helpers `swiftcov_engine()`, `swiftcov_resolved_mode()`
+  and `swiftcov_recommended_settings()`. `swiftcov_engine()` returns a
+  swiftcov-branded string. The previous `fast_xdebug_engine()`,
+  `fast_xdebug_resolved_mode()` and `fast_xdebug_recommended_settings()` are
+  retained as documented BC aliases (they share the same handlers and now also
+  return the swiftcov-branded engine string).
+- `xdebug_info()` now reports `"engine" => "swiftcov (fast-xdebug)"` so the
+  product identity is self-describing while remaining detectable as not-real-Xdebug.
+- New `.phpt` test `tests/002-product-identity.phpt` asserting the runtime still
+  answers as `xdebug` while the product sentinels are swiftcov-branded.
+
+### Notes
+- No behavioural change to line/branch/path coverage output; still
+  byte-identical lines to pcov/Xdebug. 13 `.phpt` tests (1 new).
 
 ## [0.4.0] - 2026-09-11
 

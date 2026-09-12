@@ -15,7 +15,7 @@ xdebug_stop_trace();
 $data = file_get_contents($out);
 @unlink($out);
 
-var_dump(str_contains($data, 'creator: fast-xdebug'));
+var_dump(str_contains($data, 'creator: swiftcov'));
 var_dump(str_contains($data, 'events: Time_(10ns) Memory_(bytes)'));
 var_dump(str_contains($data, 'fn=inner'));
 var_dump(str_contains($data, 'fn=outer'));

@@ -1,18 +1,18 @@
 /*
    +----------------------------------------------------------------------+
-   | fast-xdebug: an Xdebug-API-compatible code coverage engine           |
+   | swiftcov: an Xdebug-API-compatible code coverage engine              |
    |                                                                      |
    | This source file is subject to the 2-Clause BSD license.             |
    +----------------------------------------------------------------------+
  */
 
-#ifndef PHP_FAST_XDEBUG_H
-#define PHP_FAST_XDEBUG_H
+#ifndef PHP_SWIFTCOV_H
+#define PHP_SWIFTCOV_H
 
-extern zend_module_entry fast_xdebug_module_entry;
-#define phpext_fast_xdebug_ptr &fast_xdebug_module_entry
+extern zend_module_entry swiftcov_module_entry;
+#define phpext_swiftcov_ptr &swiftcov_module_entry
 
-#define PHP_FAST_XDEBUG_VERSION "0.4.0"
+#define PHP_SWIFTCOV_VERSION "0.5.0"
 
 /*
  * Reported Xdebug-compatible version. sebastian/environment and
@@ -21,14 +21,14 @@ extern zend_module_entry fast_xdebug_module_entry;
  * version so those checks pass. See docs/design.md ("Compatibility
  * posture") for the rationale and its risks.
  */
-#define FXD_XDEBUG_COMPAT_VERSION "3.6.99-fast-xdebug-" PHP_FAST_XDEBUG_VERSION
+#define FXD_XDEBUG_COMPAT_VERSION "3.6.99-swiftcov-" PHP_SWIFTCOV_VERSION
 
 #ifdef PHP_WIN32
-#	define PHP_FAST_XDEBUG_API __declspec(dllexport)
+#	define PHP_SWIFTCOV_API __declspec(dllexport)
 #elif defined(__GNUC__) && __GNUC__ >= 4
-#	define PHP_FAST_XDEBUG_API __attribute__ ((visibility("default")))
+#	define PHP_SWIFTCOV_API __attribute__ ((visibility("default")))
 #else
-#	define PHP_FAST_XDEBUG_API
+#	define PHP_SWIFTCOV_API
 #endif
 
 #ifdef ZTS
@@ -49,7 +49,7 @@ extern zend_module_entry fast_xdebug_module_entry;
 #define FXD_MAX_PATHS        4096
 #define FXD_BRANCH_MAX_OUTS  64
 
-ZEND_BEGIN_MODULE_GLOBALS(fast_xdebug)
+ZEND_BEGIN_MODULE_GLOBALS(swiftcov)
 	/* whether xdebug_start_code_coverage() is currently active */
 	zend_bool  coverage_active;
 	/* flags passed to the current start_code_coverage() call */
@@ -83,10 +83,10 @@ ZEND_BEGIN_MODULE_GLOBALS(fast_xdebug)
 	zend_long  memory_limit_bytes;   /* -1 = unlimited */
 	uint32_t   effective_max_paths;  /* per-session cap, <= FXD_MAX_PATHS */
 	zend_bool  memory_guard;         /* whether adaptation is enabled */
-ZEND_END_MODULE_GLOBALS(fast_xdebug)
+ZEND_END_MODULE_GLOBALS(swiftcov)
 
-ZEND_EXTERN_MODULE_GLOBALS(fast_xdebug)
+ZEND_EXTERN_MODULE_GLOBALS(swiftcov)
 
-#define FXD_G(v) ZEND_MODULE_GLOBALS_ACCESSOR(fast_xdebug, v)
+#define FXD_G(v) ZEND_MODULE_GLOBALS_ACCESSOR(swiftcov, v)
 
-#endif /* PHP_FAST_XDEBUG_H */
+#endif /* PHP_SWIFTCOV_H */
