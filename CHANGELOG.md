@@ -36,6 +36,17 @@ php-code-coverage / PHPUnit / Cachegrind tooling consume.
   answers as `xdebug` while the product sentinels are swiftcov-branded.
 
 ### Fixed
+- **swiftcov cannot be co-loaded with the real Xdebug.** Because swiftcov
+  registers its `zend_module_entry` name as the literal string `"xdebug"`
+  (ADR-0001), loading swiftcov on top of an already-loaded real Xdebug
+  registers two modules named `"xdebug"`, which PHP reports as
+  `Module "xdebug" is already loaded` and then crashes with a SIGSEGV in
+  `php_module_startup`. CI and consumers must remove the real Xdebug (and any
+  other coverage driver claiming that name) before loading swiftcov. The
+  GitHub Actions workflows now pass `coverage: none` and
+  `extensions: ":xdebug, :pcov"` to `shivammathur/setup-php` so the real
+  Xdebug is never present when swiftcov loads. See ADR-0001 and the README
+  note that swiftcov "cannot be loaded at the same time as real Xdebug".
 - **Load-time crash-safety hardening.** The per-opcode handler
   (`fxd_opcode_handler`) now NULL-guards `execute_data`/`opline` before
   dereferencing, so an unexpected VM state (e.g. an opcache/JIT edge case)

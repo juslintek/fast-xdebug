@@ -39,6 +39,11 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
+          # Remove the real Xdebug so it never co-loads with swiftcov during the
+          # smoke test (both claim the "xdebug" module name -> SIGSEGV in
+          # php_module_startup).
+          coverage: none
+          extensions: ":xdebug, :pcov"
         env:
           phpts: ${{ matrix.ts }}
 
@@ -96,6 +101,10 @@ jobs:
         with:
           php-version: '8.3'
           tools: pecl
+          # Keep the real Xdebug out so it cannot co-load with swiftcov (both
+          # claim the "xdebug" module name -> SIGSEGV in php_module_startup).
+          coverage: none
+          extensions: ":xdebug, :pcov"
       - name: Build PECL package + plain source tarball
         env:
           TAG_INPUT: ${{ github.event.inputs.tag || github.ref_name }}

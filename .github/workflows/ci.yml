@@ -28,6 +28,14 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
+          # setup-php installs the REAL Xdebug by default. swiftcov registers its
+          # zend_module_entry name as the literal "xdebug" (ADR-0001), so a
+          # co-load of the real Xdebug and swiftcov registers the "xdebug" module
+          # twice -> SIGSEGV in php_module_startup. Disable the coverage driver
+          # and explicitly remove any pre-installed real Xdebug/pcov so swiftcov
+          # is the only module named "xdebug".
+          coverage: none
+          extensions: ":xdebug, :pcov"
         env:
           # setup-php: "nts" (default) or "ts"/"zts" for a thread-safe build.
           phpts: ${{ matrix.ts }}
@@ -65,103 +73,6 @@ jobs:
           php -n run-tests.php -q -p "$(command -v php)" \
             -d extension="$PWD/modules/swiftcov.so" tests/*.phpt
 
-      # TEMPORARY DIAGNOSTIC - TODO(PR #1): remove this entire step once CI is
-      # confirmed green. It runs ONLY when a prior step failed (`if: failure()`),
-      # which in practice means the gating `.phpt test suite` step above blew up
-      # (the .phpt suite BORKs with Termsig=11 when system OPcache is co-loaded
-      # with swiftcov). It changes NOTHING about pass/fail: `set +e` plus a
-      # per-command `|| true` guarantee the step always completes and prints
-      # everything it can.
-      #
-      # Why a separate step: the `.phpt` step runs under `bash -e`, so its first
-      # non-zero command (the gating run-tests.php) aborts that step instantly
-      # and any trailing diagnostic block never executes; that is exactly why
-      # earlier CI runs produced zero diagnostic output and no faulting stack.
-      #
-      # The run-tests.php PARENT does not crash, so tracing it yields no useful
-      # backtrace. Instead we reproduce and gdb-trace the ACTUAL crashing CHILD
-      # directly: a single php process co-loading the system OPcache with
-      # swiftcov (no `-n`), plus controls to isolate the interaction.
-      #
-      # PRIME REMAINING HYPOTHESIS (for the human reading the CI log):
-      #   This module registers its zend_module_entry name as the literal string
-      #   "xdebug" and reports phpversion('xdebug') so that php-code-coverage's
-      #   extension_loaded('xdebug') gate passes (see ADR-0001). ondrej's OPcache
-      #   build may carry real-Xdebug-aware detection that, on finding a module
-      #   NAMED "xdebug" that lacks the genuine Xdebug zend_extension registration
-      #   and symbols, dereferences an unexpected/NULL pointer -> SIGSEGV.
-      #   A SAFE future experiment is a diagnostic-only rebuild that registers the
-      #   runtime name as "swiftcov" to see if the co-load crash disappears. Do
-      #   NOT change the shipping runtime name here: php-code-coverage gates on
-      #   extension_loaded('xdebug'); the shipping module MUST keep registering as
-      #   "xdebug". This step only gathers evidence.
-      - name: Crash backtrace diagnostic (TODO PR #1)
-        if: ${{ failure() }}
-        shell: bash
-        run: |
-          # TODO(PR #1) temporary: never abort, always print everything.
-          set +e
-          ulimit -c unlimited
-
-          echo "===== TODO(PR #1) env / config ====="
-          php --version || true
-          php -m || true
-          OPC="$(php-config --extension-dir)/opcache.so"
-          echo "OPC=$OPC"
-          ls -l "$OPC" || true
-
-          echo "===== TODO(PR #1) Control A: opcache only ====="
-          php -d zend_extension="$OPC" -d opcache.enable_cli=1 \
-            -r 'echo "opcache-only OK\n";' || true
-
-          echo "===== TODO(PR #1) Control B: swiftcov only (-n) ====="
-          php -n -d extension="$PWD/modules/swiftcov.so" \
-            -r 'echo "swiftcov-only OK\n";' || true
-
-          echo "===== TODO(PR #1) gdb variant 1: opcache.enable_cli=1 + swiftcov ====="
-          gdb -batch \
-            -ex 'set pagination off' \
-            -ex 'set confirm off' \
-            -ex run \
-            -ex 'bt full' \
-            -ex 'thread apply all bt' \
-            -ex 'info sharedlibrary' \
-            --args php -d zend_extension="$OPC" -d opcache.enable_cli=1 \
-            -d extension="$PWD/modules/swiftcov.so" \
-            -r 'var_dump(extension_loaded("xdebug"));' || true
-
-          echo "===== TODO(PR #1) gdb variant 2: opcache loaded, enable_cli OFF + swiftcov ====="
-          # No opcache.enable_cli=1: distinguishes a co-load-at-startup crash
-          # from an execution-time (caching-active) crash.
-          gdb -batch \
-            -ex 'set pagination off' \
-            -ex 'set confirm off' \
-            -ex run \
-            -ex 'bt full' \
-            -ex 'thread apply all bt' \
-            -ex 'info sharedlibrary' \
-            --args php -d zend_extension="$OPC" \
-            -d extension="$PWD/modules/swiftcov.so" \
-            -r 'var_dump(extension_loaded("xdebug"));' || true
-
-          echo "===== TODO(PR #1) gdb variant 3: exact SKIPIF child (opcache + swiftcov) ====="
-          # Runs the exact SKIPIF probe the .phpt harness executes, to pin whether
-          # the SKIPIF child specifically triggers the fault.
-          gdb -batch \
-            -ex 'set pagination off' \
-            -ex 'set confirm off' \
-            -ex run \
-            -ex 'bt full' \
-            -ex 'thread apply all bt' \
-            -ex 'info sharedlibrary' \
-            --args php -d zend_extension="$OPC" -d opcache.enable_cli=1 \
-            -d extension="$PWD/modules/swiftcov.so" \
-            -r 'if (!extension_loaded("xdebug") || !function_exists("fast_xdebug_engine")) echo "skip";' || true
-
-          echo "===== TODO(PR #1) core-file fallback ====="
-          # If any run dumped a core, extract a backtrace from it.
-          gdb -batch -ex 'bt full' php core* || true
-
       - name: Valgrind — frameless internal-call regression
         run: |
           cat > /tmp/frameless.php <<'PHP'
@@ -189,6 +100,10 @@ jobs:
         with:
           php-version: ${{ matrix.php }}
           tools: composer
+          # Remove the real Xdebug so it never co-loads with swiftcov (both claim
+          # the "xdebug" module name -> SIGSEGV in php_module_startup).
+          coverage: none
+          extensions: ":xdebug, :pcov"
       - run: sudo apt-get update && sudo apt-get install -y build-essential autoconf
       - name: Build extension
         run: |
