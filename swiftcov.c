@@ -22,6 +22,7 @@
 #include "ext/standard/info.h"
 #include "Zend/zend_extensions.h"
 #include "Zend/zend_smart_str.h"
+#include "Zend/zend_ini.h"
 
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
@@ -612,6 +613,44 @@ static void php_swiftcov_globals_ctor(zend_swiftcov_globals *g)
 	g->memory_guard = 1;
 }
 
+/*
+ * Force OPcache's JIT off before we install our user opcode handlers.
+ *
+ * swiftcov installs a zend user_opcode_handler on ~every opcode type (see
+ * src/coverage.c fxd_install_handlers). JIT-compiled traces bypass and
+ * conflict with user opcode handlers and corrupt VM state, which crashes the
+ * process at load time on any PHP that ships opcache + JIT enabled (e.g.
+ * ondrej/setup-php). Both real Xdebug and pcov force JIT off whenever they
+ * install opcode hooks for exactly this reason; swiftcov must do the same.
+ *
+ * Best-effort: opcache may register/lock its INI after our MINIT, so the alter
+ * call is not guaranteed to win -- the NULL-hardening in fxd_opcode_handler is
+ * the primary crash-safety guarantee. We only touch anything when opcache is
+ * actually present (same "zend opcache" module-registry probe already used in
+ * fxd_build_recommended_settings).
+ */
+static void fxd_disable_jit_if_present(void)
+{
+	zend_string *name;
+
+	if (!zend_hash_str_exists(&module_registry, "zend opcache",
+	                          sizeof("zend opcache") - 1)) {
+		return;
+	}
+
+	name = zend_string_init("opcache.jit", sizeof("opcache.jit") - 1, 0);
+	(void) zend_alter_ini_entry_chars(name, "disable", sizeof("disable") - 1,
+		ZEND_INI_SYSTEM, ZEND_INI_STAGE_STARTUP);
+	zend_string_release(name);
+
+	/* Defensively zero the JIT buffer too, so no JIT machinery is armed. */
+	name = zend_string_init("opcache.jit_buffer_size",
+	                        sizeof("opcache.jit_buffer_size") - 1, 0);
+	(void) zend_alter_ini_entry_chars(name, "0", sizeof("0") - 1,
+		ZEND_INI_SYSTEM, ZEND_INI_STAGE_STARTUP);
+	zend_string_release(name);
+}
+
 PHP_MINIT_FUNCTION(swiftcov)
 {
 	REGISTER_INI_ENTRIES();
@@ -629,6 +668,10 @@ PHP_MINIT_FUNCTION(swiftcov)
 	REGISTER_LONG_CONSTANT("XDEBUG_TRACE_COMPUTERIZED", 2, CONST_CS | CONST_PERSISTENT);
 	REGISTER_LONG_CONSTANT("XDEBUG_TRACE_HTML",         4, CONST_CS | CONST_PERSISTENT);
 	REGISTER_LONG_CONSTANT("XDEBUG_TRACE_NAKED_FILENAME", 8, CONST_CS | CONST_PERSISTENT);
+
+	/* Disable OPcache JIT BEFORE installing any user opcode handlers below, so
+	 * JIT is off before zend_set_user_opcode_handler runs (matches Xdebug/pcov). */
+	fxd_disable_jit_if_present();
 
 	fxd_coverage_minit();
 	fxd_profiler_minit();

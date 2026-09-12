@@ -337,7 +337,17 @@ static zend_always_inline void fxd_mark(zend_execute_data *execute_data)
 
 static int fxd_opcode_handler(zend_execute_data *execute_data)
 {
-	uint8_t opcode = execute_data->opline->opcode;
+	uint8_t opcode;
+
+	/* Harden against unexpected VM state that opcache/JIT edge cases can
+	 * produce: never dereference execute_data or its opline blindly. If there
+	 * is no frame or no opline, there is nothing to attribute -- just dispatch
+	 * to the VM so execution proceeds safely. */
+	if (!execute_data || !execute_data->opline) {
+		return ZEND_USER_OPCODE_DISPATCH;
+	}
+
+	opcode = execute_data->opline->opcode;
 
 	fxd_mark(execute_data);
 
