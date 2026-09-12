@@ -321,6 +321,59 @@ The [`deploy/k8s/`](deploy/k8s/) manifests define a `Job` that runs
 `phpunit --path-coverage` and writes Cobertura; see
 [deploy/k8s/README.md](deploy/k8s/README.md).
 
+## Adopting in infrastructure
+
+swiftcov is meant to be as native and hassle-free as pcov to roll out, but with
+branch/path coverage. The full rollout plan (compatibility-first swap, risk
+controls, phased distribution, the long-term first-class php-code-coverage
+driver, and observability/rollback) is in
+[docs/adoption-roadmap.md](docs/adoption-roadmap.md).
+
+Adoption is one line in each ecosystem, because swiftcov registers as `xdebug`
+and emits the same Cobertura/Clover shape your pipeline already reads:
+
+**GitHub Actions** - reusable composite action
+([`.github/actions/setup-swiftcov`](.github/actions/setup-swiftcov/action.yml)):
+
+```yaml
+- uses: juslintek/swiftcov/.github/actions/setup-swiftcov@v0.5.0
+  with:
+    php-version: '8.4'
+    mode: coverage
+```
+
+Or call the whole coverage job as a reusable workflow
+([`.github/workflows/reusable-coverage.yml`](.github/workflows/reusable-coverage.yml)):
+
+```yaml
+jobs:
+  coverage:
+    uses: juslintek/swiftcov/.github/workflows/reusable-coverage.yml@v0.5.0
+    with:
+      php-version: '8.4'
+```
+
+**GitLab CI** - `include:` the template
+([`ci/templates/swiftcov.gitlab-ci.yml`](ci/templates/swiftcov.gitlab-ci.yml)):
+
+```yaml
+include:
+  - project: 'juslintek/swiftcov'
+    ref: v0.5.0
+    file: '/ci/templates/swiftcov.gitlab-ci.yml'
+
+coverage:
+  extends: .swiftcov-coverage
+```
+
+To see the recommended ini for a given environment (advisory only, no silent
+mutation), run [`scripts/swiftcov-bootstrap.php`](scripts/swiftcov-bootstrap.php)
+with the extension loaded:
+
+```sh
+php -d extension=swiftcov.so scripts/swiftcov-bootstrap.php
+```
+
 ## Usage
 
 Just run PHPUnit as usual — path coverage now works and is fast:

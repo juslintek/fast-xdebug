@@ -34,6 +34,16 @@ php-code-coverage / PHPUnit / Cachegrind tooling consume.
   product identity is self-describing while remaining detectable as not-real-Xdebug.
 - New `.phpt` test `tests/002-product-identity.phpt` asserting the runtime still
   answers as `xdebug` while the product sentinels are swiftcov-branded.
+- **Infrastructure adoption tooling and roadmap.** `docs/adoption-roadmap.md`
+  lays out the compatibility-first rollout, risk controls, phased distribution
+  plan, the long-term first-class php-code-coverage driver end-state, and
+  observability/rollback. One-line adoption paths ship with it: a reusable
+  GitHub composite action (`.github/actions/setup-swiftcov`), a reusable GitHub
+  workflow (`.github/workflows/reusable-coverage.yml`), a GitLab `include:`
+  template (`ci/templates/swiftcov.gitlab-ci.yml`), and an advisory bootstrap
+  helper (`scripts/swiftcov-bootstrap.php`) that prints a tuned ini snippet
+  without mutating anything. README gains an "Adopting in infrastructure"
+  section pointing at them.
 
 ### Notes
 - No behavioural change to line/branch/path coverage output; still

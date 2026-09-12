@@ -1,0 +1,105 @@
+name: Setup swiftcov
+description: >-
+  Build (or download a prebuilt) swiftcov coverage extension and enable it, so a
+  downstream job gets fast branch/path coverage that registers as the "xdebug"
+  module. Drop-in replacement for setup-php + pcov, with path coverage.
+
+# Usage from a consuming repository:
+#
+#   steps:
+#     - uses: actions/checkout@v4
+#     - uses: juslintek/swiftcov/.github/actions/setup-swiftcov@v0.5.0
+#       with:
+#         php-version: '8.4'
+#         mode: coverage
+#     - run: vendor/bin/phpunit --path-coverage --coverage-cobertura=cobertura.xml
+
+inputs:
+  php-version:
+    description: PHP version to install and build against.
+    required: false
+    default: '8.4'
+  mode:
+    description: >-
+      Value for xdebug.mode (swiftcov keeps the xdebug.* namespace). Use
+      "coverage" for line+branch/path coverage; "auto" lets swiftcov resolve the
+      mode from the runner context.
+    required: false
+    default: coverage
+  source:
+    description: >-
+      Where to get the extension: "build" compiles from this action's checkout
+      of the swiftcov repo; "release" downloads the prebuilt .so from the tagged
+      GitHub Release matching release-tag.
+    required: false
+    default: build
+  release-tag:
+    description: >-
+      Release tag to download the prebuilt .so from when source=release
+      (e.g. v0.5.0). Ignored when source=build.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Install PHP with dev headers
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ inputs.php-version }}
+        tools: composer
+
+    - name: Install build tooling
+      if: inputs.source == 'build'
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install -y build-essential autoconf pkg-config
+
+    - name: Build swiftcov from source
+      if: inputs.source == 'build'
+      shell: bash
+      working-directory: ${{ github.action_path }}/../../..
+      run: |
+        phpize
+        ./configure --enable-swiftcov --with-php-config="$(command -v php-config)"
+        make -j"$(nproc)"
+        echo "SWIFTCOV_SO=$(pwd)/modules/swiftcov.so" >> "$GITHUB_ENV"
+
+    - name: Download prebuilt swiftcov .so
+      if: inputs.source == 'release'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        api=$(php -i | awk -F'=> ' '/PHP Extension =>/ {print $2; exit}')
+        asset="swiftcov-${{ inputs.release-tag }}-php${{ inputs.php-version }}-nts-linux-x86_64-api${api}.so"
+        mkdir -p "$HOME/.swiftcov"
+        gh release download "${{ inputs.release-tag }}" \
+          --repo juslintek/swiftcov \
+          --pattern "$asset" \
+          --output "$HOME/.swiftcov/swiftcov.so"
+        echo "SWIFTCOV_SO=$HOME/.swiftcov/swiftcov.so" >> "$GITHUB_ENV"
+
+    - name: Enable the extension
+      shell: bash
+      run: |
+        set -euo pipefail
+        ini_dir="$(php -i | awk -F'=> ' '/Scan this dir for additional .ini files/ {print $2; exit}')"
+        if [ -z "$ini_dir" ]; then
+          ini_dir="$(php -r 'echo dirname(php_ini_loaded_file());')/conf.d"
+          sudo mkdir -p "$ini_dir"
+        fi
+        {
+          echo "extension=${SWIFTCOV_SO}"
+          echo "xdebug.mode=${{ inputs.mode }}"
+        } | sudo tee "${ini_dir}/00-swiftcov.ini" > /dev/null
+
+    - name: Verify swiftcov is active (registers as xdebug)
+      shell: bash
+      run: |
+        php -r '
+          assert(extension_loaded("xdebug"));
+          assert(version_compare(phpversion("xdebug"), "3.1", ">="));
+          assert(in_array("coverage", xdebug_info("mode"), true));
+          echo swiftcov_engine(), " OK\n";
+        '
