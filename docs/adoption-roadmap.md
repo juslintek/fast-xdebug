@@ -12,6 +12,11 @@ The positioning is simple: **as native and hassle-free as pcov to drop in, but
 with the branch/path coverage that pcov cannot produce**, and faster than
 legacy Xdebug for coverage.
 
+> **Background / history.** The original repository analysis and the plan that
+> led to the swiftcov rename are preserved as a historical baseline in
+> [docs/analysis-and-plan.md](analysis-and-plan.md) (captured at fast-xdebug
+> 0.4.0, before the rename completed in 0.5.0).
+
 ## 1. Compatibility-first rollout (drop-in, no pipeline change)
 
 swiftcov registers at runtime as the module `xdebug`

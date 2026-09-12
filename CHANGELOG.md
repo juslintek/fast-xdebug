@@ -47,7 +47,7 @@ php-code-coverage / PHPUnit / Cachegrind tooling consume.
 
 ### Notes
 - No behavioural change to line/branch/path coverage output; still
-  byte-identical lines to pcov/Xdebug. 13 `.phpt` tests (1 new).
+  byte-identical lines to pcov/Xdebug. 16 `.phpt` tests (4 new).
 
 ## [0.4.0] - 2026-09-11
 

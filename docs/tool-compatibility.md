@@ -28,11 +28,11 @@ Status legend:
 | **php-code-coverage** `Driver\Selector` | selects `XdebugDriver` when `extension_loaded('xdebug')` and `phpversion('xdebug') >= 3.1` | driver selected | works | `070-tool-probes.phpt` |
 | **php-code-coverage** `Driver\XdebugDriver::__construct()` | `xdebug_info('mode')` is a list containing `'coverage'` | `['coverage', …]` (list) | works | `070-tool-probes.phpt` |
 | **php-code-coverage** `XdebugDriver` (constants) | `XDEBUG_CC_UNUSED`, `XDEBUG_CC_DEAD_CODE`, `XDEBUG_CC_BRANCH_CHECK`, `XDEBUG_FILTER_CODE_COVERAGE`, `XDEBUG_PATH_INCLUDE`, `XDEBUG_PATH_EXCLUDE` defined with Xdebug's numeric values | defined, values `1/2/4` and `0/1/0` | works | `072-constant-values.phpt` |
-| **php-code-coverage** `XdebugDriver::start()` | `xdebug_start_code_coverage(XDEBUG_CC_UNUSED | XDEBUG_CC_DEAD_CODE [| XDEBUG_CC_BRANCH_CHECK])` | starts recording | works | `010-line-coverage.phpt`, `070-tool-probes.phpt` |
+| **php-code-coverage** `XdebugDriver::start()` | `xdebug_start_code_coverage(XDEBUG_CC_UNUSED \| XDEBUG_CC_DEAD_CODE [\| XDEBUG_CC_BRANCH_CHECK])` | starts recording | works | `010-line-coverage.phpt`, `070-tool-probes.phpt` |
 | **php-code-coverage** `XdebugDriver::stop()` | `xdebug_get_code_coverage()` then `xdebug_stop_code_coverage()` | returns per-file line map (line-exact with Xdebug) | works | `010-line-coverage.phpt`, `011-line-coverage-main.phpt` |
 | **php-code-coverage** `Driver::isActive()` | `xdebug_code_coverage_started()` | toggles `false → true → false` | works | `041-started.phpt`, `070-tool-probes.phpt` |
 | **php-code-coverage** `Filter` integration | `xdebug_set_filter(XDEBUG_FILTER_CODE_COVERAGE, XDEBUG_PATH_INCLUDE, [dirs])` | restricts coverage to included prefixes | works | `040-filter.phpt` |
-| **php-code-coverage** path coverage (`RawCodeCoverageData::fromXdebugWithPathCoverage`) | `xdebug_get_code_coverage(…|XDEBUG_CC_BRANCH_CHECK)` returns per-file `functions => { branches, paths }` | correct shape | works | `020-branch-shape.phpt`, `070-tool-probes.phpt` |
+| **php-code-coverage** path coverage (`RawCodeCoverageData::fromXdebugWithPathCoverage`) | `xdebug_get_code_coverage(…\|XDEBUG_CC_BRANCH_CHECK)` returns per-file `functions => { branches, paths }` | correct shape | works | `020-branch-shape.phpt`, `070-tool-probes.phpt` |
 | **php-code-coverage** Cobertura report writer | reads per-branch `op_start`/`op_end`/`line_start`/`line_end`/`hit`/`out`/`out_hit` and per-path `path`/`hit`; tallies `branches-valid`/`branches-covered` | all fields present with correct types | works | `071-cobertura-shape.phpt` |
 | **php-code-coverage** Clover report writer | consumes the same line + branch data | works via the shared driver output | works | `071-cobertura-shape.phpt` (branch tally) |
 

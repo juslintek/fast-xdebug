@@ -25,9 +25,19 @@ spec:
         app.kubernetes.io/component: coverage
     spec:
       restartPolicy: Never
+      # Pod-level hardening: never run as root, and give the group ownership of
+      # mounted volumes so the non-root user can write to them.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: phpunit
           # Match the tag to your PHP version (php8.2 / php8.3 / php8.4).
+          # For production / supply-chain integrity, pin by digest once the image
+          # is published, e.g. juslintek/swiftcov@sha256:<digest> — the mutable
+          # tag is shown here for readability only.
           image: juslintek/swiftcov:php8.4
           workingDir: /app
           command:
@@ -39,6 +49,18 @@ spec:
             # coverage is the image default; set explicitly for clarity.
             - name: XDEBUG_MODE
               value: coverage
+          # Container-level hardening: drop all capabilities, forbid privilege
+          # escalation, and run with a read-only root filesystem. Writable paths
+          # are provided as emptyDir mounts below.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           resources:
             requests:
               cpu: "500m"
@@ -49,12 +71,23 @@ spec:
           volumeMounts:
             - name: project
               mountPath: /app
+            # readOnlyRootFilesystem blocks writes to /; give the run a writable
+            # scratch dir. The cobertura report lands under /app/build, which is
+            # on the writable project PVC.
+            - name: tmp
+              mountPath: /tmp
+            - name: build
+              mountPath: /app/build
       volumes:
         - name: project
           # Replace with your source of truth: a PVC that holds the checked-out
           # project, an emptyDir populated by an initContainer, etc.
           persistentVolumeClaim:
             claimName: swiftcov-project
+        - name: tmp
+          emptyDir: {}
+        - name: build
+          emptyDir: {}
 ---
 # A minimal PVC the Job mounts at /app. Populate it (e.g. from a CI checkout
 # step or an initContainer) before running the Job. Adjust storageClassName /

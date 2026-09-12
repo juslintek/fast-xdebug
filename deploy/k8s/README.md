@@ -36,6 +36,13 @@ artifact store) and feed it to your coverage dashboard unchanged.
 ## Notes
 
 - The image tag must match your app's PHP version so the extension ABI lines up.
+  For production / supply-chain integrity, pin the image by digest once it is
+  published (`juslintek/swiftcov@sha256:<digest>`); the manifest uses a mutable
+  tag for readability only.
+- The Job is hardened: it runs as a non-root user (1000:1000), drops all Linux
+  capabilities, forbids privilege escalation, and uses a read-only root
+  filesystem. Writable `emptyDir` volumes are mounted at `/tmp` and `/app/build`
+  (where the Cobertura report is written); the project PVC at `/app` is writable.
 - `XDEBUG_MODE=coverage` is set explicitly; the image already defaults to it.
 - Tune `resources` for large suites — path enumeration is the main memory sink,
   and swiftcov's memory guard degrades gracefully under pressure rather than

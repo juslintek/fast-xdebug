@@ -1,5 +1,10 @@
 # fast-xdebug: repository analysis and publishable-product plan
 
+> **Historical planning baseline (captured at fast-xdebug 0.4.0).** The swiftcov
+> rename described in Section B is now COMPLETE and shipped in 0.5.0; see
+> [ADR-0003](decisions/0003-product-identity-vs-runtime-name.md) and
+> [docs/adoption-roadmap.md](adoption-roadmap.md). Retained for provenance.
+
 Status: baseline verified on 2026-09 against PHP 8.2.33, 8.3.33, 8.4.24 (all NTS,
 preinstalled via mise). This document is the anchor for the subsequent features
 FEAT-002..FEAT-005; those features implement against Section B here.

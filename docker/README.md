@@ -61,6 +61,21 @@ COPY --from=juslintek/swiftcov:php8.3 \
 Match the PHP version tag (`php8.2` / `php8.3` / `php8.4`) to your base image so
 the extension ABI matches.
 
+> **Pin by digest for supply-chain integrity.** The `juslintek/swiftcov:php8.3`
+> references above use a mutable tag for readability. For production and
+> reproducible builds you SHOULD pin to a specific image digest once the image
+> is published, so the content is verified on pull (CWE-494):
+>
+> ```dockerfile
+> COPY --from=juslintek/swiftcov@sha256:<digest> \
+>      /usr/local/lib/php/extensions/ \
+>      /usr/local/lib/php/extensions/
+> ```
+>
+> Resolve the digest with `docker buildx imagetools inspect juslintek/swiftcov:php8.3`
+> (or `docker inspect`) after the image is published, then use the
+> `@sha256:<digest>` form in place of the tag.
+
 ## Verify inside a container
 
 ```sh

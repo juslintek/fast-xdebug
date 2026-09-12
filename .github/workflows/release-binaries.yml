@@ -53,9 +53,15 @@ jobs:
 
       - name: Package the .so with a descriptive name
         id: pkg
+        env:
+          TAG_INPUT: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
+          case "$TAG_INPUT" in
+            v[0-9]*|[0-9]*) ;;
+            *) echo "invalid tag format: $TAG_INPUT" >&2; exit 1;;
+          esac
           API=$(php -i | awk -F'=> ' '/PHP Extension =>/ {print $2; exit}')
-          NAME="swiftcov-${{ github.event.inputs.tag || github.ref_name }}-php${{ matrix.php }}-${{ matrix.ts }}-linux-x86_64-api${API}.so"
+          NAME="swiftcov-${TAG_INPUT}-php${{ matrix.php }}-${{ matrix.ts }}-linux-x86_64-api${API}.so"
           cp modules/swiftcov.so "$NAME"
           sha256sum "$NAME" > "$NAME.sha256"
           echo "artifact=$NAME" >> "$GITHUB_OUTPUT"
@@ -91,9 +97,15 @@ jobs:
           php-version: '8.3'
           tools: pecl
       - name: Build PECL package + plain source tarball
+        env:
+          TAG_INPUT: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          pecl package package.xml || true
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          case "$TAG_INPUT" in
+            v[0-9]*|[0-9]*) ;;
+            *) echo "invalid tag format: $TAG_INPUT" >&2; exit 1;;
+          esac
+          pecl package package.xml
+          TAG="$TAG_INPUT"
           git archive --format=tar.gz --prefix="swiftcov-${TAG#v}/" -o "swiftcov-${TAG#v}-src.tar.gz" HEAD
       - name: Upload to the release
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'

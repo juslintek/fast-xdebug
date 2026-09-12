@@ -78,6 +78,9 @@ implemented. PHP 8.2-8.5.
     <file role="test" name="060-auto-mode.phpt"/>
     <file role="test" name="061-recommended-settings.phpt"/>
     <file role="test" name="062-memory-guard.phpt"/>
+    <file role="test" name="070-tool-probes.phpt"/>
+    <file role="test" name="071-cobertura-shape.phpt"/>
+    <file role="test" name="072-constant-values.phpt"/>
    </dir>
    <file role="doc" name="README.md"/>
    <file role="doc" name="LICENSE"/>
