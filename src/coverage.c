@@ -64,7 +64,26 @@ static uint8_t fxd_terminator[256];
  * user_opcode_handler table. Handlers are installed lazily only while a
  * coverage session is active (see fxd_install_handlers / fxd_remove_handlers)
  * so that processes which never start coverage -- and processes co-loaded with
- * OPcache -- never carry a permanent global opcode hook. */
+ * OPcache -- never carry a permanent global opcode hook.
+ *
+ * THREADING: fxd_handlers_installed and fxd_prev_handler[] are file-static, so
+ * they are PROCESS-GLOBAL, not per-thread. This is deliberate and correct for
+ * the same reason it is unavoidable: the VM's user_opcode_handler table that
+ * zend_set_user_opcode_handler() mutates is ITSELF process-global, so any
+ * lazy per-session toggling of it is inherently a process-wide, shared-state
+ * operation -- per-thread statics would not make the underlying table safe.
+ * Under ZTS this means two threads that start/stop coverage around OVERLAPPING
+ * sessions share one global opcode table: one thread's stop() can restore the
+ * table while another thread's session is still active. swiftcov's coverage is
+ * a single-request-per-process CLI use case (php -d extension=... run-tests, CI
+ * .phpt children, coverage collectors), where at most one session is live at a
+ * time, so this is not exercised; the CI ZTS row is best-effort
+ * (continue-on-error). We intentionally do NOT add locking here: it would be
+ * speculative complexity for a scenario swiftcov does not target, and it could
+ * not fix the fundamental shared-table property anyway. If concurrent
+ * multi-threaded coverage sessions ever become a target, the correct fix is a
+ * mutex around install/remove plus a per-thread active-session refcount, not
+ * per-thread copies of these statics. */
 static zend_bool fxd_handlers_installed = 0;
 
 /* ---- filter helpers ---------------------------------------------------- */
@@ -397,11 +416,78 @@ static int fxd_opcode_handler(zend_execute_data *execute_data)
  * zend_vm_set_opcode_handler(). On remove the user table has been restored, so
  * the same walk resets the oplines to their non-hooked handlers. This is the
  * same op_array-patching pcov performs when it toggles coverage. Only real
- * user op_arrays with opcodes are patched. */
+ * user op_arrays with opcodes are patched.
+ *
+ * OPcache-co-load safety (the exact hazard that motivated this whole fix):
+ * when OPcache caches a script in shared memory, its op_arrays are flagged
+ * ZEND_ACC_IMMUTABLE and their opcode arrays live in the SHM segment shared
+ * across every worker process. With opcache.protect_memory=1 that SHM is mapped
+ * READ-ONLY, so zend_vm_set_opcode_handler() -- which writes opline->handler --
+ * faults: verified locally, an unguarded write here SIGSEGVs (exit 139) under
+ * `-d opcache.enable_cli=1 -d opcache.protect_memory=1`. Even with protection
+ * off, writing there mutates VM handler pointers that other workers execute.
+ * We therefore NEVER write into an op_array that could be SHM-backed; the
+ * check lives in fxd_op_array_shm_unsafe() and covers BOTH (a) ZEND_ACC_IMMUTABLE
+ * functions/methods/classes (how pcov guards) and (b) the top-level {main}
+ * op_array whenever OPcache is loaded, because a cached {main}'s opcodes can be
+ * served from SHM WITHOUT the IMMUTABLE flag (verified locally: with only the
+ * IMMUTABLE guard, writing {main}'s oplines still SIGSEGVs under protect_memory).
+ *
+ * TRADEOFF (documented, deliberate): code whose op_array is SHM-backed keeps its
+ * plain, baked-in opline handlers -- it does not route through swiftcov's
+ * dispatcher -- so its coverage is not recorded while co-loaded with OPcache.
+ * This is the price of never writing to SHM. Registering the hook at MINIT (so
+ * OPcache would bake our dispatcher in) is NOT an option: it is exactly the
+ * permanent global hook whose co-load with OPcache produced the original CI
+ * SIGSEGV (also reproduced locally at exit 139). The CI gate is unaffected: each
+ * run-tests.php FILE/SKIPIF child runs its script ONCE in a fresh process, so
+ * {main} is freshly compiled (heap, writable) when start() runs and is covered
+ * normally; a script is only served from SHM on a SUBSEQUENT run. Users who need
+ * full coverage under co-loaded OPcache disable OPcache for the coverage run
+ * (the standard practice for pcov/Xdebug too). Crash-freedom is the hard
+ * requirement; missing coverage for SHM-cached code is a graceful degradation. */
+/* Cached "is Zend OPcache loaded in this process?" answer. OPcache presence is
+ * fixed for the process lifetime, so we resolve it once. When OPcache is
+ * loaded, the top-level script op_array ({main}) may have its opcodes served
+ * from the read-only/shared SHM segment even though it is NOT flagged
+ * ZEND_ACC_IMMUTABLE (only named functions/methods/classes get that flag), so
+ * we must not write into it either. See fxd_op_array_shm_unsafe(). */
+static int fxd_opcache_loaded = -1; /* -1 = unresolved, 0 = no, 1 = yes */
+
+static zend_bool fxd_opcache_is_loaded(void)
+{
+	if (fxd_opcache_loaded < 0) {
+		fxd_opcache_loaded = zend_get_extension("Zend OPcache") ? 1 : 0;
+	}
+	return fxd_opcache_loaded != 0;
+}
+
+/* Return non-zero when writing into op_array->opcodes could touch OPcache's
+ * shared/read-only SHM. Two cases:
+ *   - ZEND_ACC_IMMUTABLE: named functions/methods/classes that OPcache cached
+ *     in SHM (pcov guards exactly this way);
+ *   - the top-level {main} script when OPcache is loaded: its opcodes can be
+ *     served straight from SHM without the IMMUTABLE flag, and there is no
+ *     portable, opcache-symbol-free way to prove otherwise, so we treat it as
+ *     unsafe whenever OPcache is present. */
+static zend_bool fxd_op_array_shm_unsafe(const zend_op_array *op_array)
+{
+	if (op_array->fn_flags & ZEND_ACC_IMMUTABLE) {
+		return 1;
+	}
+	if (op_array->function_name == NULL && fxd_opcache_is_loaded()) {
+		return 1;
+	}
+	return 0;
+}
+
 static void fxd_patch_op_array(zend_op_array *op_array)
 {
 	uint32_t i;
 	if (!op_array || op_array->type != ZEND_USER_FUNCTION || !op_array->opcodes) {
+		return;
+	}
+	if (fxd_op_array_shm_unsafe(op_array)) {
 		return;
 	}
 	for (i = 0; i < op_array->last; i++) {
@@ -412,7 +498,9 @@ static void fxd_patch_op_array(zend_op_array *op_array)
 /* Walk every compiled user op_array reachable from the engine (top-level
  * functions, class methods) plus the op_arrays of all live frames, re-selecting
  * their opline handlers so an install/remove toggle takes effect on code that
- * was compiled before the toggle. */
+ * was compiled before the toggle. SHM-backed op_arrays (immutable functions and
+ * the {main} script under co-loaded OPcache) are skipped by fxd_patch_op_array()
+ * to avoid writing into shared/read-only memory; see the tradeoff note there. */
 static void fxd_patch_all_op_arrays(void)
 {
 	zend_function *func;
