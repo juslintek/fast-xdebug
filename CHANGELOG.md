@@ -34,6 +34,15 @@ php-code-coverage / PHPUnit / Cachegrind tooling consume.
   product identity is self-describing while remaining detectable as not-real-Xdebug.
 - New `.phpt` test `tests/002-product-identity.phpt` asserting the runtime still
   answers as `xdebug` while the product sentinels are swiftcov-branded.
+
+### Fixed
+- **Load-time crash-safety hardening.** The per-opcode handler
+  (`fxd_opcode_handler`) now NULL-guards `execute_data`/`opline` before
+  dereferencing, so an unexpected VM state (e.g. an opcache/JIT edge case)
+  dispatches safely to the engine instead of segfaulting. As defense-in-depth
+  matching Xdebug/pcov, OPcache JIT is force-disabled at `MINIT` (best-effort,
+  only when OPcache is loaded) before the user opcode handlers are installed,
+  since JIT-compiled traces can bypass and conflict with them.
 - **Infrastructure adoption tooling and roadmap.** `docs/adoption-roadmap.md`
   lays out the compatibility-first rollout, risk controls, phased distribution
   plan, the long-term first-class php-code-coverage driver end-state, and
