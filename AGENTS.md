@@ -1,0 +1,7 @@
+# Agent guidance
+
+Keep changes small and follow the existing C, PHP, and documentation style. Before editing, read the relevant source and tests; for coverage or opcode behavior, also read `docs/design.md` and the applicable decision records. `README.md` describes supported PHP versions and user-visible behavior.
+
+Build and verify with the existing project commands. The blocking CI checks are the PHP 8.2–8.5 NTS builds, the `.phpt` suite, the frameless-call Valgrind check, and PHPUnit path-coverage integration on PHP 8.2–8.4; see `.github/workflows/ci.yml` for exact commands. Locally, build with `phpize`, `./configure --enable-fast-xdebug --with-php-config="$(command -v php-config)"`, and `make`; run the `.phpt` suite with `php run-tests.php -q -d extension="$PWD/modules/fast_xdebug.so" tests/*.phpt`. Run integration checks when Composer and the required PHP version are available. Report checks that could not run; do not weaken or skip tests to get a passing result.
+
+Do not run installation commands such as `install.sh` during development: they can modify the host PHP installation or configuration. Do not expose credentials, private data, or user code outside the repository. Keep compatibility and security behavior intact, and avoid adding dependencies without a concrete need. This repository has no product UI; if one is added, preserve semantic HTML, keyboard access, visible focus, and reduced-motion support.
