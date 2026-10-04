@@ -52,7 +52,7 @@ jobs:
 
       - name: .phpt test suite
         run: |
-          php -n run-tests.php -q -p "$(command -v php)" \
+          php -n run-tests.php -q -p "$(command -v php)" -n \
             -d extension="$PWD/modules/fast_xdebug.so" tests/*.phpt
 
       - name: Valgrind — frameless internal-call regression
@@ -81,6 +81,8 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
+          extensions: dom,mbstring,tokenizer,xmlwriter,ctype
+          coverage: none
           tools: composer
       - run: sudo apt-get update && sudo apt-get install -y build-essential autoconf
       - name: Build extension
@@ -90,7 +92,7 @@ jobs:
         run: |
           cd tests/integration
           composer install --no-interaction
-          php -n -d extension="$GITHUB_WORKSPACE/modules/fast_xdebug.so" -d memory_limit=512M \
+          php -d extension="$GITHUB_WORKSPACE/modules/fast_xdebug.so" -d memory_limit=512M \
             ./vendor/bin/phpunit --path-coverage --coverage-cobertura=cobertura.xml
           # assert the report is well-formed and carries branch data
           php -r '$x=simplexml_load_file("cobertura.xml"); if(!$x||!isset($x["branches-valid"])){fwrite(STDERR,"bad cobertura\n");exit(1);} echo "cobertura OK: branches-valid=",$x["branches-valid"],"\n";'
